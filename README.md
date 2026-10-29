@@ -15,7 +15,9 @@ aws --endpoint-url http://127.0.0.1:4566 s3 ls
 `start` is an alias for foreground `serve`; stop with Ctrl-C. Use `--port 4567`
 for another port, or `--data-dir ./state` to persist state across restarts.
 Without `--data-dir`, storage is in memory. Health is `GET /_floci/health`.
-The HTTP listener is loopback-only. Upstream Docker-backed services such as Lambda
+The HTTP listener is loopback-only. EC2 is disabled by default because upstream
+starts an additional wildcard-bound IMDS listener on port 9169. Set
+`FLOCI_SERVICES_EC2_ENABLED=true` to opt into that container-oriented behavior. Upstream Docker-backed services such as Lambda
 and RDS retain their Docker requirements and are outside the initial acceptance suite.
 
 ## Build and test
@@ -29,10 +31,19 @@ python3 scripts/test-integration.py dist/awssim
 ```
 
 For JVM development use `python3 scripts/build.py --jvm`, then
-`java -jar build/upstream/target/quarkus-app/quarkus-run.jar serve`.
+`java -jar build/upstream-jvm/target/quarkus-app/quarkus-run.jar serve`.
 Builds fetch source once; cached source is checksum-verified on every build.
-With Maven dependencies cached, builds and tests can run without internet access.
-Tests use explicit loopback endpoints and dummy credentials.
+With Maven dependencies cached, `python3 scripts/build.py --offline` and tests run without internet access.
+Tests require AWS CLI (`aws`) and use explicit loopback endpoints and dummy credentials.
+They verify S3 bytes, DynamoDB items, SQS messages, occupied-port errors, graceful
+shutdown, persistence across restart, and deletion of test resources.
+
+To additionally exercise the released lmaws Java SDK host, set `LMAWS_BINARY` to a
+checksum-verified lmaws v0.1.27 binary and `LMAWS_COMPILER` to lmscript 0.2.420.
+That release reads bytecode v5; the current compiler emits v6. The test exports
+its schema, compiles a small program, creates and writes all three resource types,
+checks inventories, cleans up, and independently verifies absence with AWS CLI.
+The compiler and client are test dependencies only.
 
 ## Design
 
@@ -52,3 +63,11 @@ path-style addressing.
 Compatibility follows the pinned upstream; passing three service lifecycles does not
 imply full AWS parity. Native builds and release publishing are owned by this repository.
 MIT; upstream attribution is retained in `FLOCI-LICENSE`.
+
+## CI and releases
+
+Main pushes build and test Linux x64/arm64, macOS x64/arm64 and Windows x64.
+Tags matching `v*` publish binaries and SHA256SUMS after all platform jobs pass.
+macOS Intel uses GraalVM 25.0.1; other platforms use 25.0.2. Linux CI builds on
+Ubuntu 22.04; Windows needs the Visual C++ runtime. Cross-platform support is
+provisional until each platform's native acceptance job passes.

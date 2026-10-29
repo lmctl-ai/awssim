@@ -1,0 +1,92 @@
+name: Build, test and release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-22.04, name: linux-x64, java: '25.0.2', ext: ''}
+          - {os: ubuntu-22.04-arm, name: linux-arm64, java: '25.0.2', ext: ''}
+          - {os: macos-15, name: macos-arm64, java: '25.0.2', ext: ''}
+          - {os: macos-15-intel, name: macos-x64, java: '25.0.1', ext: ''}
+          - {os: windows-2022, name: windows-x64, java: '25.0.2', ext: '.exe'}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - uses: graalvm/setup-graalvm@27b360dbb857524eaf0b4c4cef364d38e5b4f173
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: graalvm-community
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+      - name: Linux prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq build-essential zlib1g-dev
+      - name: Install test client
+        run: python -m pip install awscli==1.44.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: runner.os == 'Linux'
+        with:
+          node-version: '24'
+      - name: Pinned SDK host and compatible compiler
+        if: runner.os == 'Linux'
+        run: |
+          python scripts/fetch-test-client.py
+          npm install --prefix "$RUNNER_TEMP/compiler" @lmctl-ai/lmctl@0.2.420
+          echo "LMAWS_COMPILER=$RUNNER_TEMP/compiler/node_modules/.bin/lmscript" >> "$GITHUB_ENV"
+      - name: Build native executable from verified source
+        run: |
+          python scripts/test-build.py
+          python scripts/build.py
+      - name: Verify CLI and real AWS service lifecycles
+        run: |
+          python scripts/test-cli.py "$PWD/dist/awssim${{ matrix.ext }}"
+          python scripts/test-integration.py "$PWD/dist/awssim${{ matrix.ext }}"
+      - name: Name release binary
+        run: mv 'dist/awssim${{ matrix.ext }}' 'dist/awssim-${{ matrix.name }}${{ matrix.ext }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: awssim-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: native
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish tested binaries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test "$GITHUB_REF_NAME" = "v$(cat VERSION)"
+          cp LICENSE FLOCI-LICENSE upstream.lock.json dist/
+          cd dist
+          sha256sum awssim-* LICENSE FLOCI-LICENSE upstream.lock.json > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" ./* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes 'Native local AWS emulator powered by pinned Floci 2.3.0. S3, DynamoDB and SQS lifecycle tests run against every binary. See README for platform requirements and upstream limitations.'
