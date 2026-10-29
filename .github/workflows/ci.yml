@@ -38,7 +38,11 @@ jobs:
           java-version: ${{ matrix.java }}
           distribution: graalvm-community
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache: maven
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: maven-cache
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}
       - name: Linux prerequisites
         if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y -qq build-essential zlib1g-dev
@@ -58,6 +62,11 @@ jobs:
         run: |
           python scripts/test-build.py
           python scripts/build.py
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        if: always() && steps.maven-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}
       - name: Verify CLI and real AWS service lifecycles
         run: |
           python scripts/test-cli.py "$PWD/dist/awssim${{ matrix.ext }}"
