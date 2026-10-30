@@ -20,7 +20,7 @@ public final class Main {
         if (args.length == 1 && (args[0].equals("--help") || args[0].equals("-h"))) {
             System.out.println("""
                 awssim: local AWS, powered by Floci
-                Usage: awssim serve|start [--port 4566] [--data-dir PATH]
+                Usage: awssim serve|start [--port 4566] [--data-dir PATH] [--auth open|enforce] [--auth-config FILE]
                        awssim --version | --help
                 Listens on 127.0.0.1. Foreground; Ctrl-C stops the server.
                 Default storage is memory. --data-dir enables persistent storage.
@@ -59,6 +59,8 @@ public final class Main {
         if (args.length == 0 || !(args[0].equals("serve") || args[0].equals("start"))) {
             throw new IllegalArgumentException("expected serve or start; use --help");
         }
+        String authMode = System.getenv().getOrDefault("SIM_AUTH", "open");
+        String authFile = System.getenv("SIM_AUTH_CONFIG");
         int port = 4566;
         String directory = null;
         boolean portSeen = false;
@@ -68,6 +70,8 @@ public final class Main {
                 throw new IllegalArgumentException("missing option value");
             }
             switch (option) {
+                case "--auth" -> authMode = args[i];
+                case "--auth-config" -> authFile = args[i];
                 case "--port" -> {
                     if (portSeen) {
                         throw new IllegalArgumentException("duplicate --port");
@@ -95,6 +99,7 @@ public final class Main {
                 default -> throw new IllegalArgumentException("unknown option; use --help");
             }
         }
+        AuthConfig.configure(authMode, authFile);
         System.setProperty("quarkus.http.host", "127.0.0.1");
         System.setProperty("quarkus.http.port", Integer.toString(port));
         System.setProperty("floci.port", Integer.toString(port));
