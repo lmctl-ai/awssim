@@ -16,5 +16,6 @@
   "awssim": "0.1.0",
   "lmaws": "0.1.27",
   "compiler": "0.2.420",
+  "docker": "nonexistent local socket",
   "date": "2026-10-29"
 }

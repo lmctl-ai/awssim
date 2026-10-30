@@ -28,6 +28,8 @@ endpoint = f'http://127.0.0.1:{port}'
 checks = []
 with tempfile.TemporaryDirectory(prefix='awssim-test-') as directory:
     directory = Path(directory)
+    ENV['FLOCI_DOCKER_DOCKER_HOST'] = ('npipe:////./pipe/awssim-test-missing-' + str(os.getpid())
+                                         if os.name == 'nt' else 'unix://' + str(directory / 'missing-docker.sock'))
     def aws(*args):
         p = subprocess.run(['aws', '--endpoint-url', endpoint, '--output', 'json',
                             '--cli-connect-timeout', '5', '--cli-read-timeout', '15', *args],

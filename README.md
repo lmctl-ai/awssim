@@ -19,10 +19,16 @@ The HTTP listener is loopback-only. EC2 is disabled by default because upstream
 starts an additional wildcard-bound IMDS listener on port 9169. Set
 `FLOCI_SERVICES_EC2_ENABLED=true` to opt into that container-oriented behavior. Upstream Docker-backed services such as Lambda
 and RDS retain their Docker requirements and are outside the initial acceptance suite.
+Docker resources default to the `awssim` namespace so startup reconciliation cannot
+adopt a stock Floci deployment's containers on the same port. Advanced users can
+set `FLOCI_DOCKER_RESOURCE_NAMESPACE` explicitly. An unreachable TCP Docker endpoint
+inherits upstream's retry delays; a missing local Docker socket fails fast.
 
 ## Build and test
 
 Requires Python 3.12+, Maven 3.9+, and GraalVM 25 (`JAVA_HOME` and `PATH`).
+Native compilation defaults to a 7 GiB heap; allow at least 10 GiB free RAM.
+Set `NATIVE_XMX` to change the build heap budget.
 
 ```sh
 python3 scripts/build.py
@@ -35,7 +41,7 @@ For JVM development use `python3 scripts/build.py --jvm`, then
 Builds fetch source once; cached source is checksum-verified on every build.
 With Maven dependencies cached, `python3 scripts/build.py --offline` and tests run without internet access.
 Tests require AWS CLI (`aws`) and use explicit loopback endpoints and dummy credentials.
-They verify S3 bytes, DynamoDB items, SQS messages, occupied-port errors, graceful
+They force a nonexistent Docker socket and verify S3 bytes, DynamoDB items, SQS messages, occupied-port errors, graceful
 shutdown, persistence across restart, and deletion of test resources.
 
 To additionally exercise the released lmaws Java SDK host, set `LMAWS_BINARY` to a
@@ -69,5 +75,5 @@ MIT; upstream attribution is retained in `FLOCI-LICENSE`.
 Main pushes build and test Linux x64/arm64, macOS x64/arm64 and Windows x64.
 Tags matching `v*` publish binaries and SHA256SUMS after all platform jobs pass.
 macOS Intel uses GraalVM 25.0.1; other platforms use 25.0.2. Linux CI builds on
-Ubuntu 22.04; Windows needs the Visual C++ runtime. Cross-platform support is
+Ubuntu 22.04 and requires glibc 2.35+ and libz; Windows needs the Visual C++ runtime. Cross-platform support is
 provisional until each platform's native acceptance job passes.

@@ -101,6 +101,12 @@ public final class Main {
         System.setProperty("floci.base-url", "http://127.0.0.1:" + port);
         System.setProperty("floci.hostname", "127.0.0.1");
         System.setProperty("floci.tls.enabled", "false");
+        // Floci reconciles containers by namespace/port. Do not adopt a stock
+        // Floci deployment's containers when this executable uses the same port.
+        if (System.getenv("FLOCI_DOCKER_RESOURCE_NAMESPACE") == null
+                && System.getProperty("floci.docker.resource-namespace") == null) {
+            System.setProperty("floci.docker.resource-namespace", "awssim");
+        }
         // Upstream EC2 starts a second, wildcard-bound IMDS listener at boot.
         // Keep the default process local; container users can explicitly opt in.
         if (System.getenv("FLOCI_SERVICES_EC2_ENABLED") == null

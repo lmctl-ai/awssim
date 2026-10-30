@@ -1,0 +1,24 @@
+{
+  "ok": true,
+  "client": "aws-cli",
+  "checks": [
+    "occupied-port exit 3",
+    "S3 create/put/get byte equality/delete",
+    "DynamoDB create/put/get equality/delete",
+    "SQS create/send/receive equality/delete message/delete queue",
+    "lmaws native SDK: three creates, writes, inventories, owned cleanup",
+    "persistent S3 bytes survive graceful restart"
+  ],
+  "leftovers": 0,
+  "runtime": "GraalVM CE 25.0.2 native",
+  "platform": "linux-arm64",
+  "floci": "2.3.0",
+  "awssim": "0.1.0",
+  "lmaws": "0.1.27",
+  "compiler": "0.2.420",
+  "docker": "nonexistent local socket",
+  "date": "2026-10-29",
+  "build_commit": "4f35f6c",
+  "ci_run": 40975734330,
+  "binary_sha256": "932b7146e0bffc3f5e8d77e040493c907cfd68ea205da17b758ae6f3a97e816a"
+}
