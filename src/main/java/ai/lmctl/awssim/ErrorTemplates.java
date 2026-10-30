@@ -18,6 +18,18 @@ final class ErrorTemplates {
                 : JSON_ERROR.formatted(quote(code), quote(message));
     }
 
+    static String startup(String endpoint) {
+        return """
+                {"ok":true,"endpoint":%s}
+                """.formatted(quote(endpoint)).stripTrailing();
+    }
+
+    static String failure(String kind, String message) {
+        return """
+                {"ok":false,"error":{"kind":%s,"message":%s}}
+                """.formatted(quote(kind), quote(message)).stripTrailing();
+    }
+
     private static String quote(String value) {
         try { return JSON.writeValueAsString(value); }
         catch (JsonProcessingException e) { throw new IllegalArgumentException("Invalid error value", e); }

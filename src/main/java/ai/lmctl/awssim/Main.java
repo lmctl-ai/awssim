@@ -48,8 +48,7 @@ public final class Main {
     public static final class Server implements QuarkusApplication {
         @Override
         public int run(String... args) {
-            System.out.println("{\"ok\":true,\"endpoint\":\"http://127.0.0.1:"
-                    + System.getProperty("floci.port") + "\"}");
+            System.out.println(ErrorTemplates.startup("http://127.0.0.1:" + System.getProperty("floci.port")));
             Quarkus.waitForExit();
             return 0;
         }
@@ -129,8 +128,7 @@ public final class Main {
 
     private static void failure(String kind, String message, int code) {
         // Messages are fixed strings, never arbitrary exception text or credentials.
-        System.out.println("{\"ok\":false,\"error\":{\"kind\":\"" + kind
-                + "\",\"message\":\"" + message + "\"}}");
+        System.out.println(ErrorTemplates.failure(kind, message));
         System.exit(code);
     }
 }

@@ -11,6 +11,12 @@ public class ErrorTemplatesTest {
         var json = new ObjectMapper().readTree(ErrorTemplates.render(false, value, value));
         if (!value.equals(json.get("__type").asText()) || !value.equals(json.get("message").asText()))
             throw new AssertionError("JSON round trip");
+        var startup = new ObjectMapper().readTree(ErrorTemplates.startup(value));
+        var failure = new ObjectMapper().readTree(ErrorTemplates.failure(value, value));
+        if (!value.equals(startup.get("endpoint").asText())
+                || !value.equals(failure.get("error").get("kind").asText())
+                || !value.equals(failure.get("error").get("message").asText()))
+            throw new AssertionError("CLI JSON round trip");
         var doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(
                 new InputSource(new StringReader(ErrorTemplates.render(true, value, value))));
         if (!value.equals(doc.getElementsByTagName("Code").item(0).getTextContent())
