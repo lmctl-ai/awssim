@@ -45,8 +45,11 @@ command = [shutil.which('mvn') or 'mvn', '-B', '-q', 'package', '-Dmaven.test.sk
 if '--offline' in sys.argv:
     command.append('-o')
 if '--jvm' not in sys.argv:
+    native_args = '-Ob,-march=compatibility'
+    if os.getenv('NATIVE_USE_G1') == '1':
+        native_args += ',-J-XX:-UseParallelGC,-J-XX:+UseG1GC'
     command += ['-Dnative', '-Dquarkus.native.native-image-xmx=' + os.getenv('NATIVE_XMX', '7g'),
-                '-Dquarkus.native.additional-build-args-append=-Ob,-march=compatibility']
+                '-Dquarkus.native.additional-build-args-append=' + native_args]
 subprocess.run(command, cwd=source, check=True)
 if '--jvm' not in sys.argv:
     suffix = '.exe' if os.name == 'nt' else ''
