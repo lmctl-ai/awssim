@@ -69,7 +69,9 @@ for secondary resources that this subset does not authorize.
 
 Presigned URLs, session tokens, SQS Query protocol, other services, and advanced IAM
 conditions/principals/resource policies are deferred. This is a local test subset,
-not a production IAM implementation. See [auth lessons](durable-memory/auth-2026-10-30.md).
+not a production IAM implementation. Evaluation covers the mapped operation and
+resources; AWS dependent-action requirements for advanced request options are not
+modeled. See [auth lessons](durable-memory/auth-2026-10-30.md).
 
 ```sh
 # Existing open-mode suite, then the same operations with enforcement:

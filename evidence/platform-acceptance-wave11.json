@@ -1,0 +1,48 @@
+{
+  "awssim": "0.2.0",
+  "run": 40992832752,
+  "source_commit": "2c05373754c103b1e28780b8be39172a8555e2d8",
+  "conclusion": "success",
+  "platforms": [
+    {
+      "name": "native (ubuntu-22.04, linux-x64, 25.0.2)",
+      "job": 123859035454,
+      "conclusion": "success",
+      "auth_checks": 49,
+      "lmaws": "0.1.27: enforced lifecycle, three service policy denials and wrong secret",
+      "lifecycle": "S3, DynamoDB, SQS in open and enforced modes; persistence; occupied-port errors; zero leftovers"
+    },
+    {
+      "name": "native (macos-15, macos-arm64, 25.0.2)",
+      "job": 123859035548,
+      "conclusion": "success",
+      "auth_checks": 49,
+      "lmaws": "0.1.27: enforced lifecycle, three service policy denials and wrong secret",
+      "lifecycle": "S3, DynamoDB, SQS in open and enforced modes; persistence; occupied-port errors; zero leftovers"
+    },
+    {
+      "name": "native (windows-2022, windows-x64, 25.0.2, .exe)",
+      "job": 123859035584,
+      "conclusion": "success",
+      "auth_checks": 45,
+      "lmaws": "unavailable in pinned client release",
+      "lifecycle": "S3, DynamoDB, SQS in open and enforced modes; persistence; occupied-port errors; zero leftovers"
+    },
+    {
+      "name": "native (macos-15-intel, macos-x64, 25.0.1)",
+      "job": 123859035588,
+      "conclusion": "success",
+      "auth_checks": 49,
+      "lmaws": "0.1.27: enforced lifecycle, three service policy denials and wrong secret",
+      "lifecycle": "S3, DynamoDB, SQS in open and enforced modes; persistence; occupied-port errors; zero leftovers"
+    },
+    {
+      "name": "native (ubuntu-22.04-arm, linux-arm64, 25.0.2)",
+      "job": 123859035622,
+      "conclusion": "success",
+      "auth_checks": 49,
+      "lmaws": "0.1.27: enforced lifecycle, three service policy denials and wrong secret",
+      "lifecycle": "S3, DynamoDB, SQS in open and enforced modes; persistence; occupied-port errors; zero leftovers"
+    }
+  ]
+}
