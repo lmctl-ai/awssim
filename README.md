@@ -23,6 +23,9 @@ Docker resources default to the `awssim` namespace so startup reconciliation can
 adopt a stock Floci deployment's containers on the same port. Advanced users can
 set `FLOCI_DOCKER_RESOURCE_NAMESPACE` explicitly. An unreachable TCP Docker endpoint
 inherits upstream's retry delays; a missing local Docker socket fails fast.
+Windows named-pipe Docker transport is deferred: the pinned upstream native image
+lacks required JNA symbols. The standard no-Docker configuration uses an absent
+Unix socket and the core AWS services remain available.
 
 ## Build and test
 
