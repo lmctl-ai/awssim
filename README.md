@@ -28,6 +28,52 @@ Windows named-pipe Docker transport is deferred: the pinned upstream native imag
 lacks required JNA symbols. The standard no-Docker configuration uses an absent
 Unix socket and the core AWS services remain available.
 
+## Optional authentication and permissions
+
+Open mode is the default. To enforce configured dummy credentials and policies:
+
+```sh
+awssim serve --auth enforce --auth-config examples/auth.json
+# Equivalent: SIM_AUTH=enforce SIM_AUTH_CONFIG=examples/auth.json awssim serve
+```
+
+The example accepts `test/test`, allows the three supported services, and denies
+Delete actions on resources whose ARN contains `protected`. Use dummy secrets only.
+CLI options override environment. The config is loaded once at startup; restart to
+rotate it. Invalid/missing config exits 2 without printing its contents.
+
+Each `credentials` entry has `accessKeyId`, `secretAccessKey`, and an optional IAM
+`policy`. Omit policy for authentication only. A present policy defaults to deny;
+an empty `Statement` denies everything. Statements accept `Effect`, `Action`,
+`Resource`, and optional `Sid`; Action/Resource accept strings or arrays with `*`
+and `?` wildcards. Explicit Deny wins. Unknown policy/config fields fail startup.
+Policies are attached to each configured key, including `test`; there is no admin
+bypass. This reuses Floci's IAM evaluator and service action/resource mappings.
+
+Enforced mode supports header SigV4 for path-style S3 and DynamoDB/SQS JSON APIs,
+including SDK v2 signed S3 chunks/trailers. It checks timestamps within 15 minutes,
+payload hashes when signed, and the chunk signature chain. S3 unsigned-payload
+modes retain AWS's unsigned-body semantics. Bodies are capped at 16 MiB encoded.
+The account is fixed to `000000000000`. Requests receive HTTP 403 with S3 XML or
+AWS JSON errors. Only `GET /_floci/health` is anonymous; unsupported routes fail closed.
+
+Presigned URLs, session tokens, SQS Query protocol, other services, and advanced IAM
+conditions/principals/resource policies are deferred. This is a local test subset,
+not a production IAM implementation. See [auth lessons](durable-memory/auth-2026-10-30.md).
+
+```sh
+# Existing open-mode suite, then the same operations with enforcement:
+python3 scripts/test-integration.py dist/awssim
+AWSSIM_TEST_AUTH=1 python3 scripts/test-integration.py dist/awssim
+python3 scripts/test-auth.py dist/awssim
+```
+
+CI pins and checksum-verifies lmaws v0.1.27 on Linux and macOS, running real SDK
+writes/cleanup with enforcement plus denied-policy and wrong-secret cases. lmaws
+returns exit 3 and `ok:false` for denials; policy errors can surface as generic
+`AWS_SERVICE_ERROR (HTTP 403)`. Windows uses AWS CLI and signed HTTP because that
+client release has no Windows asset. No client or compiler is needed at runtime.
+
 ## Build and test
 
 Requires Python 3.12+, Maven 3.9+, and GraalVM 25 (`JAVA_HOME` and `PATH`).
