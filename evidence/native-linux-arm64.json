@@ -17,8 +17,8 @@
   "lmaws": "0.1.27",
   "compiler": "0.2.420",
   "docker": "nonexistent local socket",
-  "date": "2026-10-29",
-  "build_commit": "4f35f6c",
-  "ci_run": 40975734330,
-  "binary_sha256": "932b7146e0bffc3f5e8d77e040493c907cfd68ea205da17b758ae6f3a97e816a"
+  "date": "2026-10-30",
+  "build_commit": "76c4f4997c413ba7ddea215a8d1635ddeb2d5ece",
+  "binary_sha256": "92e8a2583b4e637dd60af3dbf35c0b18ad784e7b5f1fc336ceb3e9ff932377b5",
+  "build": "local offline native build; 7 GiB native-image heap"
 }
