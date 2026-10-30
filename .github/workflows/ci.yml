@@ -57,6 +57,8 @@ jobs:
         run: |
           python scripts/fetch-test-client.py
           npm install --prefix "$RUNNER_TEMP/compiler" @lmctl-ai/lmctl@0.2.420
+          npm install --prefix "$RUNNER_TEMP/templates" @lmctl-ai/lmctl@0.2.444
+          echo "LMSCRIPT_BIN=$RUNNER_TEMP/templates/node_modules/.bin/lmscript" >> "$GITHUB_ENV"
           echo "LMAWS_COMPILER=$RUNNER_TEMP/compiler/node_modules/.bin/lmscript" >> "$GITHUB_ENV"
       - name: Build native executable from verified source
         env:
@@ -76,10 +78,14 @@ jobs:
           key: maven-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('upstream.lock.json') }}
       - name: Verify CLI and real AWS service lifecycles
         run: |
+          python scripts/test-error-templates.py
           python scripts/test-cli.py "$PWD/dist/awssim${{ matrix.ext }}"
           python scripts/test-integration.py "$PWD/dist/awssim${{ matrix.ext }}"
           AWSSIM_TEST_AUTH=1 python scripts/test-integration.py "$PWD/dist/awssim${{ matrix.ext }}"
           python scripts/test-auth.py "$PWD/dist/awssim${{ matrix.ext }}"
+      - name: Verify template requests and SDK integration
+        if: runner.os != 'Windows'
+        run: python scripts/test-templates.py "$PWD/dist/awssim${{ matrix.ext }}"
       - name: Name release binary
         run: mv 'dist/awssim${{ matrix.ext }}' 'dist/awssim-${{ matrix.name }}${{ matrix.ext }}'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

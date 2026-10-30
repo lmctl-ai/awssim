@@ -1,0 +1,47 @@
+# Run through scripts/test-templates.py: ARGV[0] is its isolated loopback endpoint.
+name = "awssim-template";
+account = "000000000000";
+region = "us-east-1";
+message = "hello \"quoted\" 雪 \\ path ${opaque}";
+count = 1;
+actions = ["sqs:CreateQueue", "sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteQueue"];
+arn = expand("arn:aws:sqs:${region}:${account}:${name}", {region: region, account: account, name: name});
+queue_url = expand("${endpoint}/${account}/${name}", {endpoint: ARGV[0], account: account, name: name});
+auth = _json_;
+{
+  # Only this queue and the owned SDK sandbox may be changed.
+  "credentials": [{"accessKeyId": "test", "secretAccessKey": "test", "policy": {
+    "Statement": [
+      {"Effect": "Allow", "Action": ${actions}, "Resource": ${arn}},
+      {"Effect": "Deny", "Action": "sqs:DeleteQueue", "Resource": ${arn}},
+      {"Effect": "Allow", "Action": "s3:*", "Resource": "arn:aws:s3:::lmaws-templates-*"}
+    ]
+  }}]
+}
+end _json_
+create = _json_;
+{"QueueName": ${name}, "tags": {"purpose": "template ${name}"}}
+end _json_
+send = _json_;
+{"QueueUrl": ${queue_url}, "MessageBody": ${message}, "MessageAttributes": {
+  "note": {"DataType": "String", "StringValue": "context: ${message}"}
+}}
+end _json_
+receive = _json_;
+{"QueueUrl": ${queue_url}, "MaxNumberOfMessages": ${count}, "MessageAttributeNames": ["All"]}
+end _json_
+delete = _json_;
+{"QueueUrl": ${queue_url}}
+end _json_
+sdk = _json_;
+{"name": "object", "key": "quoted.txt", "body": ${message}}
+end _json_
+write_json("auth.json", auth);
+write_json("create.json", create);
+write_json("send.json", send);
+write_json("receive.json", receive);
+write_json("delete.json", delete);
+write_json("sdk.json", sdk);
+assert(type(receive.MaxNumberOfMessages) == "number");
+assert(send.MessageBody == message);
+assert(send.MessageAttributes.note.StringValue == "context: " + message);

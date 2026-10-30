@@ -1,0 +1,18 @@
+# Compatibility bridge: pinned lmaws consumes v5 bytecode. The fresh engine
+# already rendered sdk.json; this compiler only transfers its typed values.
+cfg = read_json("sdk.json");
+bucket_name = expand("lmaws-templates-${name}", {name: cfg.name});
+p = _dsl_ schema="schema.json";
+let cloud = aws.region("us-east-1");
+check(!cloud.is_demo());
+let run = cloud.run("templates", "owned.jsonl");
+let bucket = run.bucket(${cfg.name});
+run.put(bucket, ${cfg.key}, ${cfg.body});
+cloud.s3_bucket_attach(${bucket_name}, "templates");
+let objects = cloud.s3_list_objects(${bucket_name}, "", 10);
+check(objects.len() == 1);
+file_write("objects.json", objects.json());
+run.cleanup();
+check(run.remaining() == 0);
+end _dsl_
+savedsl(p, "client.dslb");

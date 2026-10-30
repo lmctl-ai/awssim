@@ -141,3 +141,40 @@ Main pushes build and test Linux x64/arm64, macOS x64/arm64 and Windows x64.
 Tags matching `v*` publish binaries and SHA256SUMS after all platform jobs pass.
 macOS Intel uses GraalVM 25.0.1; other platforms use 25.0.2. Linux CI builds on
 Ubuntu 22.04 and requires glibc 2.35+ and libz; Windows needs the Visual C++ runtime. All five platforms have passed native CLI and AWS service acceptance tests.
+
+### Template-driven LMScript integration
+
+`examples/templates.lms` authors request bodies and the enforce-mode credential
+policy with `_json_` blocks. It preserves numeric/list types and safely inserts
+quotes, Unicode, backslashes and literal `${opaque}` text. `expand()` constructs
+only non-JSON queue URLs and policy ARNs. `examples/templates-client.lms` passes
+the generated values to the pinned lmaws schema: create an owned S3 bucket,
+write an object, inspect its key, and clean up.
+
+Run the complete isolated open/enforce example against a built simulator:
+
+```sh
+python3 scripts/fetch-test-client.py
+npm install --prefix .cache/compiler @lmctl-ai/lmctl@0.2.420
+npm install --prefix .cache/templates @lmctl-ai/lmctl@0.2.444
+LMSCRIPT_BIN="$PWD/.cache/templates/node_modules/.bin/lmscript" \
+LMAWS_COMPILER="$PWD/.cache/compiler/node_modules/.bin/lmscript" \
+LMAWS_BINARY="$(python3 scripts/fetch-test-client.py)" \
+python3 scripts/test-templates.py "$PWD/dist/awssim"
+```
+
+Install the existing test dependency `awscli==1.44.0` in the Python environment
+first; the wire checks use its Apache-2.0 botocore signer. To test the fresh mono
+engine, set `LMSCRIPT_BIN=/home/ubuntu/lmctl-mono/bin/lmscript` instead. Neither
+installation changes the global compiler. The older compiler is only a v5
+bytecode bridge for lmaws v0.1.27; JSON generation uses the fresh engine.
+
+The runner creates temporary state and dummy `test/test` credentials, starts its
+own loopback server, and checks four SQS request templates (create, send, receive,
+delete), message attributes and content equality, S3 SDK results and cleanup.
+Deleting the queue succeeds in open mode and produces an asserted AWS JSON 403
+in enforce mode; creating a bucket outside the policy produces an asserted XML
+403. All state disappears with the isolated server. Linux/macOS CI runs this
+suite; Windows retains the wire/auth regression suite because the pinned lmaws
+release has no Windows binary. Our Java auth error responses use text blocks
+with per-value JSON/XML escaping, tested on all five platforms.

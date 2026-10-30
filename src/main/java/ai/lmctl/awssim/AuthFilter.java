@@ -128,8 +128,7 @@ public class AuthFilter implements ContainerRequestFilter {
         } catch (Exception e) { reject(ctx, xml, "SignatureDoesNotMatch", "Signature validation failed"); }
     }
     private static void reject(ContainerRequestContext ctx, boolean xml, String code, String message) {
-        String body = xml ? "<Error><Code>" + code + "</Code><Message>" + message + "</Message></Error>"
-                : "{\"__type\":\"" + code + "\",\"message\":\"" + message + "\"}";
+        String body = ErrorTemplates.render(xml, code, message);
         ctx.abortWith(Response.status(403).type(xml ? "application/xml" : "application/x-amz-json-1.0")
                 .header("x-amzn-errortype", code).entity(body).build());
     }
