@@ -1,0 +1,24 @@
+{
+  "platforms": {
+    "macos-arm64": {
+      "run": 40980471210,
+      "commit": "e03aff12139418c6b806804c0ba81897ad05ba69",
+      "native_build": "48m 57s",
+      "cli_checks": 11,
+      "service_tests": "S3, DynamoDB, SQS; occupied port; persistent S3 restart; zero leftovers"
+    },
+    "linux-x64": {
+      "run": 40981355445
+    },
+    "linux-arm64": {
+      "run": 40981355445
+    },
+    "macos-x64": {
+      "run": 40981355445
+    },
+    "windows-x64": {
+      "run": 40981355445
+    }
+  },
+  "note": "All listed platform jobs passed. The macOS ARM64 detached build was validated on an isolated CI branch before promotion to main; that run used the same application overlay, version and upstream pin."
+}

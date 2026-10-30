@@ -32,7 +32,10 @@ Unix socket and the core AWS services remain available.
 
 Requires Python 3.12+, Maven 3.9+, and GraalVM 25 (`JAVA_HOME` and `PATH`).
 Native compilation defaults to a 7 GiB heap; allow at least 10 GiB free RAM.
-Set `NATIVE_XMX` to change the build heap budget.
+Set `NATIVE_XMX` to change the build heap budget. On memory-constrained macOS ARM64
+runners, CI uses `NATIVE_XMX=5g NATIVE_USE_G1=1 NATIVE_DETACHED=1`: Maven
+first prepares Quarkus native sources and exits, then `native-image` runs with
+the generated arguments. This avoids keeping Maven resident during compilation.
 
 ```sh
 python3 scripts/build.py
@@ -79,5 +82,4 @@ MIT; upstream attribution is retained in `FLOCI-LICENSE`.
 Main pushes build and test Linux x64/arm64, macOS x64/arm64 and Windows x64.
 Tags matching `v*` publish binaries and SHA256SUMS after all platform jobs pass.
 macOS Intel uses GraalVM 25.0.1; other platforms use 25.0.2. Linux CI builds on
-Ubuntu 22.04 and requires glibc 2.35+ and libz; Windows needs the Visual C++ runtime. Cross-platform support is
-provisional until each platform's native acceptance job passes.
+Ubuntu 22.04 and requires glibc 2.35+ and libz; Windows needs the Visual C++ runtime. All five platforms have passed native CLI and AWS service acceptance tests.
