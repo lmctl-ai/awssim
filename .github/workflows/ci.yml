@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.ref }}
+  group: macos-memory-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   native:
@@ -16,11 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-22.04, name: linux-x64, java: '25.0.2', ext: ''}
-          - {os: ubuntu-22.04-arm, name: linux-arm64, java: '25.0.2', ext: ''}
           - {os: macos-15, name: macos-arm64, java: '25.0.2', ext: ''}
-          - {os: macos-15-intel, name: macos-x64, java: '25.0.1', ext: ''}
-          - {os: windows-2022, name: windows-x64, java: '25.0.2', ext: '.exe'}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -64,7 +60,8 @@ jobs:
           # Maven driver small and let G1 share the native builder heap flexibly.
           NATIVE_XMX: ${{ matrix.name == 'macos-arm64' && '5g' || '7g' }}
           NATIVE_USE_G1: ${{ matrix.name == 'macos-arm64' && '1' || '0' }}
-          MAVEN_OPTS: ${{ matrix.name == 'macos-arm64' && '-Xmx768m' || '-Xmx1536m' }}
+          MAVEN_OPTS: '-Xmx1536m'
+          NATIVE_DETACHED: '1'
         run: |
           python scripts/test-build.py
           python scripts/build.py

@@ -44,16 +44,30 @@ command = [shutil.which('mvn') or 'mvn', '-B', '-q', 'package', '-Dmaven.test.sk
            '-Dquarkus.package.main-class=ai.lmctl.awssim.Main']
 if '--offline' in sys.argv:
     command.append('-o')
+detached = '--jvm' not in sys.argv and os.getenv('NATIVE_DETACHED') == '1'
 if '--jvm' not in sys.argv:
     native_args = '-Ob,-march=compatibility'
     if os.getenv('NATIVE_USE_G1') == '1':
         native_args += ',-J-XX:-UseParallelGC,-J-XX:+UseG1GC'
     command += ['-Dnative', '-Dquarkus.native.native-image-xmx=' + os.getenv('NATIVE_XMX', '7g'),
                 '-Dquarkus.native.additional-build-args-append=' + native_args]
+if detached:
+    command.append('-Dquarkus.native.sources-only=true')
 subprocess.run(command, cwd=source, check=True)
 if '--jvm' not in sys.argv:
     suffix = '.exe' if os.name == 'nt' else ''
     output = ROOT / 'dist' / ('awssim' + suffix)
     output.parent.mkdir(exist_ok=True)
-    shutil.copy2(source / 'target' / ('floci-' + lock['tag'] + '-runner' + suffix), output)
+    binary = source / 'target' / ('floci-' + lock['tag'] + '-runner' + suffix)
+    if detached:
+        native_source = source / 'target' / 'native-sources'
+        native_image = shutil.which('native-image')
+        if not native_image:
+            sys.exit('Detached build requires native-image on PATH')
+        # Match Quarkus native-sources argv: preserve regex backslashes and $.
+        # No shell or shlex expansion; all generated paths are relative.
+        arguments = (native_source / 'native-image.args').read_text().split()
+        subprocess.run([native_image, *arguments], cwd=native_source, check=True)
+        binary = native_source / binary.name
+    shutil.copy2(binary, output)
     print(output)
