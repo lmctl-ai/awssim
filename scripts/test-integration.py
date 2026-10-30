@@ -17,7 +17,7 @@ if Path(COMMAND[0]).is_file():
     COMMAND[0] = str(Path(COMMAND[0]).resolve())
 # Never consult a user's credentials, config, proxy, or cloud endpoint.
 ENV = {k: v for k, v in os.environ.items()
-       if not k.startswith(('AWS_', 'FLOCI_', 'QUARKUS_')) and 'proxy' not in k.lower()}
+       if not k.startswith(('AWS_', 'FLOCI_', 'QUARKUS_', 'SIM_')) and 'proxy' not in k.lower()}
 ENV.update(AWS_ACCESS_KEY_ID='test', AWS_SECRET_ACCESS_KEY='test',
            AWS_DEFAULT_REGION='us-east-1', AWS_EC2_METADATA_DISABLED='true',
            AWS_PAGER='', AWS_CONFIG_FILE=os.devnull, AWS_SHARED_CREDENTIALS_FILE=os.devnull)
@@ -28,6 +28,10 @@ endpoint = f'http://127.0.0.1:{port}'
 checks = []
 with tempfile.TemporaryDirectory(prefix='awssim-test-') as directory:
     directory = Path(directory)
+    if os.environ.get('AWSSIM_TEST_AUTH') == '1':
+        auth = {'credentials': [{'accessKeyId': 'test', 'secretAccessKey': 'test', 'policy': {'Statement': [{'Effect': 'Allow', 'Action': ['s3:*', 'dynamodb:*', 'sqs:*'], 'Resource': '*'}]}}]}
+        (directory / 'auth.json').write_text(json.dumps(auth))
+        ENV.update(SIM_AUTH='enforce', SIM_AUTH_CONFIG=str(directory / 'auth.json'))
     ENV['FLOCI_DOCKER_DOCKER_HOST'] = ('unix:///awssim-test-missing-' + str(os.getpid()) + '.sock'
                                          if os.name == 'nt' else 'unix://' + str(directory / 'missing-docker.sock'))
     def aws(*args):

@@ -49,11 +49,11 @@ jobs:
       - name: Install test client
         run: python -m pip install awscli==1.44.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        if: runner.os == 'Linux'
+        if: runner.os != 'Windows'
         with:
           node-version: '24'
       - name: Pinned SDK host and compatible compiler
-        if: runner.os == 'Linux'
+        if: runner.os != 'Windows'
         run: |
           python scripts/fetch-test-client.py
           npm install --prefix "$RUNNER_TEMP/compiler" @lmctl-ai/lmctl@0.2.420
@@ -78,6 +78,8 @@ jobs:
         run: |
           python scripts/test-cli.py "$PWD/dist/awssim${{ matrix.ext }}"
           python scripts/test-integration.py "$PWD/dist/awssim${{ matrix.ext }}"
+          AWSSIM_TEST_AUTH=1 python scripts/test-integration.py "$PWD/dist/awssim${{ matrix.ext }}"
+          python scripts/test-auth.py "$PWD/dist/awssim${{ matrix.ext }}"
       - name: Name release binary
         run: mv 'dist/awssim${{ matrix.ext }}' 'dist/awssim-${{ matrix.name }}${{ matrix.ext }}'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
