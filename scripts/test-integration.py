@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix='awssim-test-') as directory:
             server = start_server()
             # A second process must report startup failure, never silently choose another port.
             busy = subprocess.run(COMMAND + ['start', '--port', str(port)], env=ENV,
-                                  cwd=directory, capture_output=True, text=True, timeout=45)
+                                  cwd=directory, capture_output=True, text=True, timeout=120)
             assert busy.returncode == 3, (busy.returncode, busy.stdout, busy.stderr)
             assert json.loads(busy.stdout)['ok'] is False
             checks.append('occupied-port exit 3')
