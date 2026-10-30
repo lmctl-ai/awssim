@@ -51,11 +51,21 @@ Policies are attached to each configured key, including `test`; there is no admi
 bypass. This reuses Floci's IAM evaluator and service action/resource mappings.
 
 Enforced mode supports header SigV4 for path-style S3 and DynamoDB/SQS JSON APIs,
-including SDK v2 signed S3 chunks/trailers. It checks timestamps within 15 minutes,
+including SDK v2 signed S3 chunks/trailers. Supported operations are listed below. It checks timestamps within 15 minutes,
 payload hashes when signed, and the chunk signature chain. S3 unsigned-payload
 modes retain AWS's unsigned-body semantics. Bodies are capped at 16 MiB encoded.
 The account is fixed to `000000000000`. Requests receive HTTP 403 with S3 XML or
 AWS JSON errors. Only `GET /_floci/health` is anonymous; unsupported routes fail closed.
+
+| Service | Enforced operations |
+| --- | --- |
+| S3 | Create/Delete bucket, List buckets/objects, Head bucket/object, Get/Put/Delete object, Get bucket location, bucket tags |
+| DynamoDB | Create/Describe/Delete/List table, Put/Get/Delete/Update item, Query/Scan, resource tags |
+| SQS | Create/Delete/Get/List queue, Get attributes, Send/Receive/Delete message, queue tags |
+
+S3 copy, POST/batch/multipart operations, versioned requests, encoded slashes and
+empty/dot path segments are rejected in enforced mode. This avoids claiming checks
+for secondary resources that this subset does not authorize.
 
 Presigned URLs, session tokens, SQS Query protocol, other services, and advanced IAM
 conditions/principals/resource policies are deferred. This is a local test subset,

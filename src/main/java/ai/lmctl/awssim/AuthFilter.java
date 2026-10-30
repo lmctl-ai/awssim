@@ -1,11 +1,13 @@
 package ai.lmctl.awssim;
 
 import io.github.hectorvent.floci.core.common.Digests;
+import io.github.hectorvent.floci.core.common.RequestContext;
 import io.github.hectorvent.floci.core.common.AwsJsonController;
 import io.github.hectorvent.floci.core.common.AwsJson11Controller;
 import io.github.hectorvent.floci.core.common.auth.*;
 import io.github.hectorvent.floci.services.iam.*;
 import io.github.hectorvent.floci.services.s3.S3Controller;
+import io.quarkus.vertx.http.runtime.CurrentVertxRequest;
 import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
@@ -23,12 +25,23 @@ import java.util.Set;
 /** Header SigV4 and identity policy boundary; upstream supplies crypto, action/ARN mapping and IAM evaluation. */
 @Provider
 @ApplicationScoped
-@Priority(900)
+@Priority(950) // After upstream account/region context (900), before other auth filters.
 public class AuthFilter implements ContainerRequestFilter {
     @Context ResourceInfo resource;
+    @Inject CurrentVertxRequest currentRequest;
+    @Inject RequestContext requestContext;
     @Inject IamActionRegistry actions;
     @Inject ResourceArnBuilder resources;
     @Inject IamPolicyEvaluator policies;
+    private static final Map<String, Set<String>> SUPPORTED = Map.of(
+        "s3", Set.of("ListAllMyBuckets", "CreateBucket", "DeleteBucket", "ListBucket", "GetBucketLocation",
+            "PutBucketTagging", "GetBucketTagging", "DeleteBucketTagging", "PutObject", "GetObject", "DeleteObject"),
+        "dynamodb", Set.of("CreateTable", "DescribeTable", "DeleteTable", "ListTables", "PutItem", "GetItem",
+            "DeleteItem", "UpdateItem", "Query", "Scan", "TagResource", "UntagResource", "ListTagsOfResource"),
+        "sqs", Set.of("CreateQueue", "DeleteQueue", "GetQueueUrl", "GetQueueAttributes", "ListQueues",
+            "SendMessage", "ReceiveMessage", "DeleteMessage", "TagQueue", "UntagQueue", "ListQueueTags"));
+    private static final Set<String> S3_QUERY = Set.of("tagging", "location", "list-type", "prefix", "delimiter",
+        "encoding-type", "continuation-token", "max-keys", "start-after");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
     public void filter(ContainerRequestContext ctx) {
         Map<String, AuthConfig.Credential> config = AuthConfig.credentials;
@@ -44,6 +57,25 @@ public class AuthFilter implements ContainerRequestFilter {
         if (service == null) { reject(ctx, false, "AccessDenied", "Unsupported operation in enforced mode"); return; }
         boolean xml = service.equals("s3");
         try {
+            String rawPath = currentRequest.getCurrent().request().path();
+            String rawQuery = currentRequest.getCurrent().request().query();
+            if (!xml && (!rawPath.equals("/") || (rawQuery != null && !rawQuery.isEmpty()))) {
+                reject(ctx, false, "AccessDenied", "Unsupported JSON request route"); return;
+            }
+            if (xml) {
+                String path = java.net.URI.create(rawPath).getPath();
+                if (!Set.of("GET", "HEAD", "PUT", "DELETE").contains(ctx.getMethod())
+                        || ctx.getHeaderString("x-amz-copy-source") != null || path.contains("//") || rawPath.contains("//")
+                        || !rawPath.equals(ctx.getUriInfo().getRequestUri().getRawPath())
+                        || List.of(path.split("/")).stream().anyMatch(p -> p.equals(".") || p.equals(".."))
+                        || rawPath.toLowerCase(java.util.Locale.ROOT).contains("%2f")
+                        || !S3_QUERY.containsAll(ctx.getUriInfo().getQueryParameters().keySet())
+                        || ((ctx.getUriInfo().getQueryParameters().containsKey("tagging")
+                             || ctx.getUriInfo().getQueryParameters().containsKey("location"))
+                            && ctx.getUriInfo().getQueryParameters().size() != 1)) {
+                    reject(ctx, true, "AccessDenied", "Unsupported S3 operation in enforced mode"); return;
+                }
+            }
             SigV4AuthorizationHeader auth = SigV4AuthorizationHeader.parse(ctx.getHeaderString("Authorization"));
             CredentialScope scope = auth == null ? null : CredentialScope.parse(auth.credential());
             if (scope == null || auth.signedHeaders() == null || auth.signature() == null
@@ -55,7 +87,10 @@ public class AuthFilter implements ContainerRequestFilter {
             String headers = auth.signedHeaders();
             List<String> names = List.of(headers.split(";"));
             String date = ctx.getHeaderString("X-Amz-Date");
-            if (!scope.service().equals(service) || !names.contains("host") || !names.contains("x-amz-date")
+            if (!"000000000000".equals(requestContext.getAccountId())
+                    || !scope.region().equals(requestContext.getRegion())
+                    || !scope.accessKeyId().equals(requestContext.getAccessKeyId())
+                    || !scope.service().equals(service) || !names.contains("host") || !names.contains("x-amz-date")
                     || (target != null && !names.contains("x-amz-target"))
                     || !names.equals(names.stream().distinct().sorted().toList())
                     || names.stream().anyMatch(n -> !n.matches("[a-z0-9-]+") || ctx.getHeaderString(n) == null)
@@ -70,15 +105,17 @@ public class AuthFilter implements ContainerRequestFilter {
             if (hash == null) hash = actualHash;
             else if (!hash.equals(actualHash) && !(xml && Set.of("UNSIGNED-PAYLOAD", "STREAMING-UNSIGNED-PAYLOAD-TRAILER",
                     "STREAMING-AWS4-HMAC-SHA256-PAYLOAD", "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER").contains(hash))) throw new IllegalArgumentException();
-            boolean valid = SigV4Canonicalization.signatureMatches(ctx.getMethod(), ctx.getUriInfo().getRequestUri().getRawPath(),
-                    SigV4Canonicalization.canonicalQueryString(ctx.getUriInfo().getRequestUri().getRawQuery(), false),
+            boolean valid = SigV4Canonicalization.signatureMatches(ctx.getMethod(), rawPath,
+                    SigV4Canonicalization.canonicalQueryString(rawQuery, false),
                     SigV4Canonicalization.canonicalHeaders(headers, ctx::getHeaderString), headers, hash, date,
                     scope, credential.secret(), auth.signature());
             if (!valid) throw new IllegalArgumentException();
             if (hash.startsWith("STREAMING-AWS4-HMAC-SHA256-"))
                 ChunkSignatures.verify(body, credential.secret(), scope, date, auth.signature(), hash.endsWith("-TRAILER"), ctx.getHeaderString("x-amz-trailer"));
             String action = xml ? actions.resolveRoute(service, ctx) : actions.resolve(service, ctx);
-            if (action == null) { reject(ctx, xml, "AccessDenied", "Unmapped action"); return; }
+            if (action == null || !SUPPORTED.get(service).contains(action.substring(action.indexOf(':') + 1))) {
+                reject(ctx, xml, "AccessDenied", "Unsupported action in enforced mode"); return;
+            }
             if (credential.policy() != null) {
                 List<String> arns = resources.buildResources(service, ctx, scope.region(), "000000000000");
                 if (arns.isEmpty()) arns = List.of("*");
