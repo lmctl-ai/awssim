@@ -123,17 +123,19 @@ with tempfile.TemporaryDirectory(prefix='awssim-auth-') as folder:
             if os.environ.get('LMAWS_BINARY'):
                 client = str(Path(os.environ['LMAWS_BINARY']).resolve())
                 (folder / 'schema.json').write_text(subprocess.check_output([client, '--dsl-schema', '--json'], text=True, timeout=30))
-                (folder / 'deny.lms').write_text('p = _dsl_ schema="schema.json";\nlet cloud = aws.region("us-east-1");\nlet run = cloud.run("awssimauth", "owned.jsonl");\nlet bucket = run.bucket("denied");\nend _dsl_\nsavedsl(p, "deny.dslb");\n')
                 compiler = os.environ.get('LMAWS_COMPILER') or shutil.which('lmscript')
-                compiled = subprocess.run([compiler, '--no-preflight', 'deny.lms'], cwd=folder, capture_output=True, text=True, timeout=60)
-                assert compiled.returncode == 0, (compiled.stdout, compiled.stderr)
-                sdk = subprocess.run([client, '--live', '--profile', 'lmaws', '--dsl', 'deny.dslb'], cwd=folder,
-                    env={**ENV, 'LMAWS_ENDPOINT': endpoint, 'LMAWS_LIVE': '1', 'CI': 'true', 'LMAWS_LEDGER_DIR': str(folder / 'ledgers')},
-                    capture_output=True, text=True, timeout=120)
-                assert sdk.returncode == 3 and 'HTTP 403' in sdk.stdout + sdk.stderr, (sdk.returncode, sdk.stdout, sdk.stderr)
-                assert json.loads(sdk.stdout)['ok'] is False
-                assert 'unique-dummy-secret' not in sdk.stdout + sdk.stderr
-                checks.append('lmaws policy deny surfaced without secret leakage; exit=' + str(sdk.returncode))
+                for kind in ('table', 'queue', 'bucket'):
+                    (folder / 'deny.lms').write_text('p = _dsl_ schema="schema.json";\nlet cloud = aws.region("us-east-1");\nlet run = cloud.run("awssimauth", "owned.jsonl");\nlet item = run.' + kind + '("denied");\nend _dsl_\nsavedsl(p, "deny.dslb");\n')
+                    compiled = subprocess.run([compiler, '--no-preflight', 'deny.lms'], cwd=folder, capture_output=True, text=True, timeout=60)
+                    assert compiled.returncode == 0, (compiled.stdout, compiled.stderr)
+                    (folder / 'owned.jsonl').unlink(missing_ok=True)
+                    sdk = subprocess.run([client, '--live', '--profile', 'lmaws', '--dsl', 'deny.dslb'], cwd=folder,
+                        env={**ENV, 'LMAWS_ENDPOINT': endpoint, 'LMAWS_LIVE': '1', 'CI': 'true', 'LMAWS_LEDGER_DIR': str(folder / 'ledgers')},
+                        capture_output=True, text=True, timeout=120)
+                    assert sdk.returncode == 3 and 'HTTP 403' in sdk.stdout + sdk.stderr, (sdk.returncode, sdk.stdout, sdk.stderr)
+                    assert json.loads(sdk.stdout)['ok'] is False
+                    assert 'unique-dummy-secret' not in sdk.stdout + sdk.stderr
+                    checks.append('lmaws ' + kind + ' policy deny surfaced without secret leakage; exit=3')
                 process.terminate(); process.wait(timeout=20)
                 config['credentials'][0]['secretAccessKey'] = 'rotated-dummy-secret'
                 (folder / 'auth.json').write_text(json.dumps(config))
@@ -146,12 +148,15 @@ with tempfile.TemporaryDirectory(prefix='awssim-auth-') as folder:
                     except OSError: pass
                     assert time.monotonic() < deadline
                     time.sleep(.2)
+                (folder / 'owned.jsonl').unlink(missing_ok=True)
                 sdk = subprocess.run([client, '--live', '--profile', 'lmaws', '--dsl', 'deny.dslb'], cwd=folder,
                     env={**ENV, 'LMAWS_ENDPOINT': endpoint, 'LMAWS_LIVE': '1', 'CI': 'true', 'LMAWS_LEDGER_DIR': str(folder / 'ledgers2')},
                     capture_output=True, text=True, timeout=120)
-                assert sdk.returncode == 3 and 'SignatureDoesNotMatch' in sdk.stdout, (sdk.returncode, sdk.stdout, sdk.stderr)
+                assert sdk.returncode == 3 and 'HTTP 403' in sdk.stdout, (sdk.returncode, sdk.stdout, sdk.stderr)
                 assert json.loads(sdk.stdout)['ok'] is False
                 assert 'rotated-dummy-secret' not in sdk.stdout + sdk.stderr
+                status, body = request('s3', 'awssim-rotation')
+                assert status == 403 and 'SignatureDoesNotMatch' in body
                 checks.append('lmaws signature error surfaced without secret leakage; exit=3')
             log.flush()
             assert 'unique-dummy-secret' not in (folder / 'server.log').read_text(errors='replace')
