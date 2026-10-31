@@ -118,7 +118,7 @@ with tempfile.TemporaryDirectory(prefix='awssim-test-') as directory:
 
             if os.environ.get('LMAWS_BINARY'):
                 client = str(Path(os.environ['LMAWS_BINARY']).resolve())
-                schema = subprocess.run([client, '--dsl-schema', '--json'],
+                schema = subprocess.run([client, '--lmcode-schema', '--json'],
                                         capture_output=True, text=True, check=True, timeout=30).stdout
                 (directory / 'schema.json').write_text(schema)
                 (directory / 'client.lms').write_text(
@@ -140,7 +140,7 @@ with tempfile.TemporaryDirectory(prefix='awssim-test-') as directory:
                            'AWS_PROFILE': 'lmaws', 'AWS_DEFAULT_PROFILE': 'lmaws',
                            'AWS_REGION': 'us-east-1', 'CI': 'true',
                            'LMAWS_LEDGER_DIR': str(directory / 'ledgers')}
-                sdk = subprocess.run([client, '--live', '--profile', 'lmaws', '--dsl', 'client.dslb'],
+                sdk = subprocess.run([client, '--live', '--profile', 'lmaws', '--lmcode', 'client.dslb'],
                                      cwd=directory, env=sdk_env, capture_output=True, text=True, timeout=120)
                 assert sdk.returncode == 0, (sdk.stdout, sdk.stderr)
                 assert not aws('s3api', 'list-buckets')['Buckets']

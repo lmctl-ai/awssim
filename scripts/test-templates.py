@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix='awssim-templates-') as tmp:
         assert isinstance(payload('receive')['MaxNumberOfMessages'], int)
         expected = 'hello "quoted" 雪 \\ path ${opaque}'
         assert payload('send')['MessageBody'] == expected
-        (folder / 'schema.json').write_text(run([CLIENT, '--dsl-schema', '--json']))
+        (folder / 'schema.json').write_text(run([CLIENT, '--lmcode-schema', '--json']))
         shutil.copyfile(ROOT / 'examples/templates-client.lms', folder / 'client.lms')
         run([os.environ['LMAWS_COMPILER'], '--no-preflight', 'client.lms'])
         with (folder / 'server.log').open('w+') as log:
@@ -97,7 +97,7 @@ with tempfile.TemporaryDirectory(prefix='awssim-templates-') as tmp:
                     assert status == 403 and result['__type'] == 'AccessDeniedException', (status, result)
                     assert result['message'] == 'Access denied by policy'
                 checks.append(mode + ': four SQS template requests, typed count, attributes and policy')
-                run([CLIENT, '--live', '--profile', 'lmaws', '--dsl', 'client.dslb'])
+                run([CLIENT, '--live', '--profile', 'lmaws', '--lmcode', 'client.dslb'])
                 objects = json.loads((folder / 'objects.json').read_text())
                 assert objects[0]['key'] == 'quoted.txt', objects
                 status, body = request('s3', 'GET', '/lmaws-templates-object/quoted.txt')
