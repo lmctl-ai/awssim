@@ -61,7 +61,9 @@ AWS JSON errors. Only `GET /_floci/health` is anonymous; unsupported routes fail
 | --- | --- |
 | S3 | Create/Delete bucket, List buckets/objects, Head bucket/object, Get/Put/Delete object, Get bucket location, bucket tags |
 | DynamoDB | Create/Describe/Delete/List table, Put/Get/Delete/Update item, Query/Scan, resource tags |
-| SQS | Create/Delete/Get/List queue, Get attributes, Send/Receive/Delete message, queue tags |
+| SQS | Create/Delete/Get/List queue, Get/Set attributes, Send/Receive/Delete message, Change message visibility, Purge queue, queue tags |
+
+The SDK-added `x-id` and `fetch-owner` S3 query parameters are accepted (and covered by the signature); they never change the authorized action.
 
 S3 copy, POST/batch/multipart operations, versioned requests, encoded slashes and
 empty/dot path segments are rejected in enforced mode. This avoids claiming checks

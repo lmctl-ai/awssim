@@ -179,6 +179,14 @@ with tempfile.TemporaryDirectory(prefix='awssim-auth-') as folder:
                                    body_override=json.dumps({'QueueUrl': f'{endpoint}/000000000000/awssim-allowed'}).encode())
             assert status == 200, (status, body)
             checks.append('SQS ChangeMessageVisibility and PurgeQueue supported in enforced mode')
+            status, body = request('sqs', 'awssim-denied', target_override='AmazonSQS.SetQueueAttributes',
+                                   body_override=json.dumps({'QueueUrl': f'{endpoint}/000000000000/awssim-denied', 'Attributes': {'VisibilityTimeout': '30'}}).encode())
+            assert status == 403 and 'AccessDeniedException' in body, (status, body)
+            status, body = request('sqs', 'awssim-allowed', key='unrestricted', secret='unrestricted-secret',
+                                   target_override='AmazonSQS.SetQueueAttributes',
+                                   body_override=json.dumps({'QueueUrl': f'{endpoint}/000000000000/awssim-allowed', 'Attributes': {'VisibilityTimeout': '30'}}).encode())
+            assert status == 200, (status, body)
+            checks.append('SQS SetQueueAttributes enforced: denied principal 403, unrestricted principal 200')
             if os.environ.get('LMAWS_BINARY'):
                 client = str(Path(os.environ['LMAWS_BINARY']).resolve())
                 (folder / 'schema.json').write_text(subprocess.check_output([client, '--lmcode-schema', '--json'], text=True, timeout=30))
