@@ -12,9 +12,7 @@ import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-COMMAND = sys.argv[1:] or [str(ROOT / 'dist' / 'awssim')]
-if Path(COMMAND[0]).is_file():
-    COMMAND[0] = str(Path(COMMAND[0]).resolve())
+COMMAND = [str(Path(a).resolve()) if Path(a).is_file() else a for a in (sys.argv[1:] or [str(ROOT / 'dist' / 'awssim')])]
 # Never consult a user's credentials, config, proxy, or cloud endpoint.
 ENV = {k: v for k, v in os.environ.items()
        if not k.startswith(('AWS_', 'FLOCI_', 'QUARKUS_', 'SIM_')) and 'proxy' not in k.lower()}
@@ -81,9 +79,24 @@ with tempfile.TemporaryDirectory(prefix='awssim-test-') as directory:
             checks.append('occupied-port exit 3')
 
             aws('s3api', 'create-bucket', '--bucket', 'awssim-roundtrip')
+            # us-east-1 re-create of an owned bucket is idempotent (200), whereas non-us-east-1 returns BucketAlreadyOwnedByYou.
+            aws('s3api', 'create-bucket', '--bucket', 'awssim-roundtrip')
+            aws('s3api', 'create-bucket', '--bucket', 'awssim-eu-bucket', '--region', 'eu-west-1',
+                '--create-bucket-configuration', 'LocationConstraint=eu-west-1')
+            dup_eu = subprocess.run(['aws', '--endpoint-url', endpoint, 's3api', 'create-bucket',
+                                     '--bucket', 'awssim-eu-bucket', '--region', 'eu-west-1',
+                                     '--create-bucket-configuration', 'LocationConstraint=eu-west-1'],
+                                    cwd=directory, env=ENV, capture_output=True, text=True, timeout=60)
+            assert dup_eu.returncode != 0 and 'BucketAlreadyOwnedByYou' in dup_eu.stderr, (dup_eu.returncode, dup_eu.stderr)
+            aws('s3api', 'delete-bucket', '--bucket', 'awssim-eu-bucket', '--region', 'eu-west-1')
+            checks.append('S3 us-east-1 idempotent CreateBucket vs non-us-east-1 BucketAlreadyOwnedByYou')
+
             payload = b'awssim real S3 round trip\x00\xff\n'
             (directory / 'payload').write_bytes(payload)
-            aws('s3api', 'put-object', '--bucket', 'awssim-roundtrip', '--key', 'test.bin', '--body', 'payload')
+            aws('s3api', 'put-object', '--bucket', 'awssim-roundtrip', '--key', 'test.bin', '--body', 'payload',
+                '--metadata', 'build_id=42')
+            head_meta = aws('s3api', 'head-object', '--bucket', 'awssim-roundtrip', '--key', 'test.bin')
+            assert head_meta.get('Metadata', {}).get('build_id') == '42', head_meta
             aws('s3api', 'get-object', '--bucket', 'awssim-roundtrip', '--key', 'test.bin', 'received')
             assert (directory / 'received').read_bytes() == payload
             aws('s3api', 'delete-object', '--bucket', 'awssim-roundtrip', '--key', 'test.bin')
@@ -108,13 +121,19 @@ with tempfile.TemporaryDirectory(prefix='awssim-test-') as directory:
             queue = aws('sqs', 'create-queue', '--queue-name', 'awssim-roundtrip')['QueueUrl']
             assert queue.startswith(endpoint + '/'), queue
             aws('sqs', 'send-message', '--queue-url', queue, '--message-body', 'awssim queue round trip')
+            message = aws('sqs', 'receive-message', '--queue-url', queue, '--visibility-timeout', '30', '--wait-time-seconds', '1')['Messages'][0]
+            assert message['Body'] == 'awssim queue round trip'
+            aws('sqs', 'change-message-visibility', '--queue-url', queue, '--receipt-handle', message['ReceiptHandle'], '--visibility-timeout', '0')
             message = aws('sqs', 'receive-message', '--queue-url', queue, '--wait-time-seconds', '1')['Messages'][0]
             assert message['Body'] == 'awssim queue round trip'
             aws('sqs', 'delete-message', '--queue-url', queue, '--receipt-handle', message['ReceiptHandle'])
             assert not aws('sqs', 'receive-message', '--queue-url', queue).get('Messages')
             aws('sqs', 'delete-queue', '--queue-url', queue)
+            gone_q = subprocess.run(['aws', '--endpoint-url', endpoint, 'sqs', 'get-queue-url', '--queue-name', 'awssim-roundtrip'],
+                                    cwd=directory, env=ENV, capture_output=True, text=True, timeout=60)
+            assert gone_q.returncode != 0 and 'NonExistentQueue' in gone_q.stderr, (gone_q.returncode, gone_q.stderr)
             assert not aws('sqs', 'list-queues').get('QueueUrls')
-            checks.append('SQS create/send/receive equality/delete message/delete queue')
+            checks.append('SQS create/send/receive/nack(0)/delete message/delete queue')
 
             if os.environ.get('LMAWS_BINARY'):
                 client = str(Path(os.environ['LMAWS_BINARY']).resolve())

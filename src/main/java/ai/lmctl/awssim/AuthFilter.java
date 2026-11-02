@@ -38,10 +38,11 @@ public class AuthFilter implements ContainerRequestFilter {
             "PutBucketTagging", "GetBucketTagging", "DeleteBucketTagging", "PutObject", "GetObject", "DeleteObject"),
         "dynamodb", Set.of("CreateTable", "DescribeTable", "DeleteTable", "ListTables", "PutItem", "GetItem",
             "DeleteItem", "UpdateItem", "Query", "Scan", "TagResource", "UntagResource", "ListTagsOfResource"),
-        "sqs", Set.of("CreateQueue", "DeleteQueue", "GetQueueUrl", "GetQueueAttributes", "ListQueues",
-            "SendMessage", "ReceiveMessage", "DeleteMessage", "TagQueue", "UntagQueue", "ListQueueTags"));
+        "sqs", Set.of("CreateQueue", "DeleteQueue", "GetQueueUrl", "GetQueueAttributes", "SetQueueAttributes",
+            "ListQueues", "PurgeQueue", "SendMessage", "ReceiveMessage", "DeleteMessage", "ChangeMessageVisibility",
+            "TagQueue", "UntagQueue", "ListQueueTags"));
     private static final Set<String> S3_QUERY = Set.of("tagging", "location", "list-type", "prefix", "delimiter",
-        "encoding-type", "continuation-token", "max-keys", "start-after");
+        "encoding-type", "continuation-token", "max-keys", "start-after", "fetch-owner", "x-id");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'").withZone(ZoneOffset.UTC);
     public void filter(ContainerRequestContext ctx) {
         Map<String, AuthConfig.Credential> config = AuthConfig.credentials;
@@ -64,15 +65,18 @@ public class AuthFilter implements ContainerRequestFilter {
             }
             if (xml) {
                 String path = java.net.URI.create(rawPath).getPath();
+                Set<String> queryKeys = ctx.getUriInfo().getQueryParameters().keySet();
+                Set<String> semanticQueryKeys = queryKeys.stream()
+                        .filter(k -> !k.equals("x-id")).collect(java.util.stream.Collectors.toSet());
                 if (!Set.of("GET", "HEAD", "PUT", "DELETE").contains(ctx.getMethod())
                         || ctx.getHeaderString("x-amz-copy-source") != null || path.contains("//") || rawPath.contains("//")
                         || !rawPath.equals(ctx.getUriInfo().getRequestUri().getRawPath())
                         || List.of(path.split("/")).stream().anyMatch(p -> p.equals(".") || p.equals(".."))
                         || rawPath.toLowerCase(java.util.Locale.ROOT).contains("%2f")
-                        || !S3_QUERY.containsAll(ctx.getUriInfo().getQueryParameters().keySet())
-                        || ((ctx.getUriInfo().getQueryParameters().containsKey("tagging")
-                             || ctx.getUriInfo().getQueryParameters().containsKey("location"))
-                            && ctx.getUriInfo().getQueryParameters().size() != 1)) {
+                        || !S3_QUERY.containsAll(queryKeys)
+                        || ((semanticQueryKeys.contains("tagging")
+                             || semanticQueryKeys.contains("location"))
+                            && semanticQueryKeys.size() != 1)) {
                     reject(ctx, true, "AccessDenied", "Unsupported S3 operation in enforced mode"); return;
                 }
             }
@@ -93,7 +97,7 @@ public class AuthFilter implements ContainerRequestFilter {
                     || !scope.service().equals(service) || !names.contains("host") || !names.contains("x-amz-date")
                     || (target != null && !names.contains("x-amz-target"))
                     || !names.equals(names.stream().distinct().sorted().toList())
-                    || names.stream().anyMatch(n -> !n.matches("[a-z0-9-]+") || ctx.getHeaderString(n) == null)
+                    || names.stream().anyMatch(n -> !n.matches("[a-z0-9_-]+") || ctx.getHeaderString(n) == null)
                     || date == null || !date.startsWith(scope.date())
                     || Math.abs(Instant.now().getEpochSecond() - Instant.from(DATE.parse(date)).getEpochSecond()) > 900
                     || ctx.getHeaderString("X-Amz-Security-Token") != null) throw new IllegalArgumentException();
@@ -130,6 +134,7 @@ public class AuthFilter implements ContainerRequestFilter {
     private static void reject(ContainerRequestContext ctx, boolean xml, String code, String message) {
         String body = ErrorTemplates.render(xml, code, message);
         ctx.abortWith(Response.status(403).type(xml ? "application/xml" : "application/x-amz-json-1.0")
-                .header("x-amzn-errortype", code).entity(body).build());
+                .header("x-amzn-errortype", code)
+                .entity("HEAD".equalsIgnoreCase(ctx.getMethod()) ? null : body).build());
     }
 }

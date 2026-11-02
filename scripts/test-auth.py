@@ -19,8 +19,7 @@ import urllib.request
 import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
-COMMAND = sys.argv[1:] or [str(ROOT / 'dist/awssim')]
-COMMAND[0] = str(Path(COMMAND[0]).resolve())
+COMMAND = [str(Path(a).resolve()) if Path(a).is_file() else a for a in (sys.argv[1:] or [str(ROOT / 'dist/awssim')])]
 ENV = {k: v for k, v in os.environ.items() if not k.startswith(('AWS_', 'FLOCI_', 'QUARKUS_', 'SIM_')) and 'proxy' not in k.lower()}
 ENV.update(AWS_ACCESS_KEY_ID='test', AWS_SECRET_ACCESS_KEY='test', AWS_DEFAULT_REGION='us-east-1',
            AWS_REGION='us-east-1', AWS_EC2_METADATA_DISABLED='true', AWS_CONFIG_FILE=os.devnull,
@@ -56,16 +55,17 @@ with tempfile.TemporaryDirectory(prefix='awssim-auth-') as folder:
                 except OSError: pass
                 assert time.monotonic() < deadline, 'readiness timeout'
                 time.sleep(.2)
-            def request(service, name, key='test', secret='test', signed=True, tamper=False, stale=False, scope_service=None, streaming=None, malformed=False, method_override=None, extra_headers=None, query=""):
+            def request(service, name, key='test', secret='test', signed=True, tamper=False, stale=False, scope_service=None, streaming=None, malformed=False, method_override=None, extra_headers=None, query="", wire_query=None, body_override=None, target_override=None, return_headers=False):
                 method, path, body = ('PUT', '/' + name, b'') if service == 's3' else ('POST', '/', json.dumps(
                     {'QueueName': name} if service == 'sqs' else {'TableName': name, 'AttributeDefinitions': [{'AttributeName': 'pk', 'AttributeType': 'S'}],
                      'KeySchema': [{'AttributeName': 'pk', 'KeyType': 'HASH'}], 'BillingMode': 'PAY_PER_REQUEST'}, separators=(',', ':')).encode())
                 if method_override: method = method_override
+                if body_override is not None: body = body_override
                 date = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1 if stale else 0)).strftime('%Y%m%dT%H%M%SZ')
                 headers = {'host': f'127.0.0.1:{port}', 'x-amz-date': date, 'x-amz-content-sha256': hashlib.sha256(body).hexdigest()}
                 if service != 's3':
                     headers['content-type'] = 'application/x-amz-json-1.0'
-                    headers['x-amz-target'] = 'AmazonSQS.CreateQueue' if service == 'sqs' else 'DynamoDB_20120810.CreateTable'
+                    headers['x-amz-target'] = target_override or ('AmazonSQS.CreateQueue' if service == 'sqs' else 'DynamoDB_20120810.CreateTable')
                 if extra_headers: headers.update(extra_headers)
                 if streaming:
                     headers['x-amz-content-sha256'] = 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD' + ('-TRAILER' if streaming == 'trailer' else '')
@@ -97,10 +97,13 @@ with tempfile.TemporaryDirectory(prefix='awssim-auth-') as folder:
                         chunks.append(trailer.replace('\n', '\r\n').encode() + f'x-amz-trailer-signature:{trailer_signature}\r\n\r\n'.encode())
                     body = b''.join(chunks)
                 if tamper: body = body.replace(b'chunk message', b'chunk forgery') if streaming else body + b' '
-                req = urllib.request.Request(endpoint + path + ('?' + query if query else ''), data=body, headers=headers, method=method)
+                effective_query = query if wire_query is None else wire_query
+                req = urllib.request.Request(endpoint + path + ('?' + effective_query if effective_query else ''), data=body if method != 'HEAD' else None, headers=headers, method=method)
                 try:
-                    with urllib.request.urlopen(req, timeout=20) as res: return res.status, res.read().decode()
-                except urllib.error.HTTPError as res: return res.code, res.read().decode()
+                    with urllib.request.urlopen(req, timeout=20) as res:
+                        return (res.status, res.read().decode(), dict(res.headers)) if return_headers else (res.status, res.read().decode())
+                except urllib.error.HTTPError as res:
+                    return (res.code, res.read().decode(), dict(res.headers)) if return_headers else (res.code, res.read().decode())
             for service in ('s3', 'dynamodb', 'sqs'):
                 for label, kwargs in [('missing', {'signed': False}), ('unknown', {'key': 'unknown'}), ('malformed', {'malformed': True}),
                                       ('wrong-secret', {'secret': 'wrong-dummy-secret'}), ('tampered', {'tamper': True}),
@@ -135,6 +138,47 @@ with tempfile.TemporaryDirectory(prefix='awssim-auth-') as folder:
             status, body = request('s3', 'awssim-allowed//ambiguous', key='unrestricted', secret='unrestricted-secret')
             assert status == 403 and 'Unsupported S3 operation' in body
             checks.append('S3 ambiguous path rejected')
+            # S3 SDK x-id query parameter compatibility + SigV4 canonical query verification + fail-closed unknown query params
+            status, body = request('s3', 'awssim-allowed/xid-obj', key='unrestricted', secret='unrestricted-secret',
+                                   query='x-id=PutObject', body_override=b'xid-payload', extra_headers={'x-amz-meta-build_id': '42'})
+            assert status == 200, (status, body)
+            status, body = request('s3', 'awssim-allowed/xid-obj', key='unrestricted', secret='unrestricted-secret',
+                                   method_override='GET', query='x-id=GetObject')
+            assert status == 200 and body == 'xid-payload', (status, body)
+            status, body = request('s3', 'awssim-allowed', key='unrestricted', secret='unrestricted-secret',
+                                   method_override='GET', query='location=&x-id=GetBucketLocation')
+            assert status == 200 and 'LocationConstraint' in body, (status, body)
+            status, body = request('s3', 'awssim-allowed', key='unrestricted', secret='unrestricted-secret',
+                                   method_override='GET', query='list-type=2&fetch-owner=false&x-id=ListObjectsV2')
+            assert status == 200 and 'xid-obj' in body, (status, body)
+            status, body = request('s3', '', key='unrestricted', secret='unrestricted-secret',
+                                   method_override='GET', query='x-id=ListBuckets')
+            assert status == 200 and 'ListAllMyBucketsResult' in body, (status, body)
+            status, body = request('s3', 'awssim-allowed/xid-obj', key='unrestricted', secret='unrestricted-secret',
+                                   method_override='DELETE', query='x-id=DeleteObject')
+            assert status == 204, (status, body)
+            checks.append('S3 x-id query parameter and x-amz-meta-* underscore signed headers accepted')
+            status, body = request('s3', 'awssim-allowed/xid-tamper', key='unrestricted', secret='unrestricted-secret',
+                                   query='x-id=PutObject', wire_query='x-id=GetObject', body_override=b'payload')
+            assert status == 403 and 'SignatureDoesNotMatch' in body, (status, body)
+            checks.append('S3 x-id query tampering rejected by SigV4 verification')
+            for bad_query in ('uploads=&x-id=CreateMultipartUpload', 'acl=&x-id=GetBucketAcl', 'versioning=&x-id=GetBucketVersioning'):
+                status, body = request('s3', 'awssim-allowed', key='unrestricted', secret='unrestricted-secret',
+                                       method_override='GET', query=bad_query)
+                assert status == 403 and 'Unsupported S3 operation' in body, (bad_query, status, body)
+            checks.append('S3 semantic query parameters fail closed even with x-id')
+            status, body, hdrs = request('s3', 'awssim-denied', method_override='HEAD', return_headers=True)
+            assert status == 403 and body == '' and hdrs.get('x-amzn-errortype') == 'AccessDenied', (status, body, hdrs)
+            checks.append('S3 HEAD 403 returns x-amzn-errortype without body')
+            # SQS ChangeMessageVisibility & PurgeQueue in enforced mode
+            status, body = request('sqs', 'awssim-denied', target_override='AmazonSQS.ChangeMessageVisibility',
+                                   body_override=json.dumps({'QueueUrl': f'{endpoint}/000000000000/awssim-denied', 'ReceiptHandle': 'rh', 'VisibilityTimeout': 0}).encode())
+            assert status == 403 and 'AccessDeniedException' in body, (status, body)
+            status, body = request('sqs', 'awssim-allowed', key='unrestricted', secret='unrestricted-secret',
+                                   target_override='AmazonSQS.PurgeQueue',
+                                   body_override=json.dumps({'QueueUrl': f'{endpoint}/000000000000/awssim-allowed'}).encode())
+            assert status == 200, (status, body)
+            checks.append('SQS ChangeMessageVisibility and PurgeQueue supported in enforced mode')
             if os.environ.get('LMAWS_BINARY'):
                 client = str(Path(os.environ['LMAWS_BINARY']).resolve())
                 (folder / 'schema.json').write_text(subprocess.check_output([client, '--lmcode-schema', '--json'], text=True, timeout=30))
