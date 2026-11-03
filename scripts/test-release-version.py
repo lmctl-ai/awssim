@@ -25,4 +25,6 @@ assert "release: ${{ steps.version.outputs.release }}" in workflow
 assert "needs: [version, native, parity-ddb]" in workflow
 assert "scripts/publish-release.sh" in workflow
 assert "gh release create \"$tag\"" in (ROOT / "scripts/publish-release.sh").read_text(encoding="utf-8")
+release_job = workflow.split("  release:", 1)[1]
+assert release_job.count("\n    env:") == 1, "release job must have a single env mapping"
 print("PASS awssim automatic version and green-main publisher contract")
