@@ -23,5 +23,6 @@ assert "branches: [main]" in workflow
 assert "tags: ['v*']" not in workflow
 assert "release: ${{ steps.version.outputs.release }}" in workflow
 assert "needs: [version, native, parity-ddb]" in workflow
-assert "gh release create \"$tag\"" in workflow
+assert "scripts/publish-release.sh" in workflow
+assert "gh release create \"$tag\"" in (ROOT / "scripts/publish-release.sh").read_text(encoding="utf-8")
 print("PASS awssim automatic version and green-main publisher contract")
