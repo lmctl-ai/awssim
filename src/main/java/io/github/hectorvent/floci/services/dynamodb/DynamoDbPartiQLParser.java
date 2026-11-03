@@ -316,6 +316,9 @@ public class DynamoDbPartiQLParser {
                 tokens.add(new Token(type, word, start));
                 continue;
             }
+            if (c == '#') {
+                throw validationEx("Statement wasn't well formed, can't be processed: ");
+            }
             throw validationEx("Unexpected character '" + c + "' in PartiQL statement");
         }
         tokens.add(new Token(TType.EOF, ""));
@@ -435,15 +438,53 @@ public class DynamoDbPartiQLParser {
         if (peek().type() == TType.IDENT && "*".equals(peek().value())) {
             advance();
         } else {
-            cols.add(parsePath());
-            while (peek().type() == TType.COMMA) { advance(); cols.add(parsePath()); }
+            cols.add(parseSelectColumn());
+            while (peek().type() == TType.COMMA) { advance(); cols.add(parseSelectColumn()); }
         }
         consume(TType.FROM);
+        if (peek().type() != TType.IDENT) {
+            throw validationEx("Statement wasn't well formed, can't be processed: Unexpected term");
+        }
         String table = expectTableName();
         String index = parseIndexQualifier();
+        checkNoTableAlias();
         List<Cond> where = new ArrayList<>();
         if (peek().type() == TType.WHERE) { advance(); where = parseConditions(); }
         return new Stmt.Select(table, index, cols, where, parseOrderBy());
+    }
+
+    private Path parseSelectColumn() {
+        if (peekFunction("count")) {
+            advance();
+            consume(TType.LPAREN);
+            if (peek().type() == TType.IDENT && "*".equals(peek().value())) {
+                advance();
+            } else {
+                parsePath();
+            }
+            consume(TType.RPAREN);
+            return new Path(List.of(new Seg.Name("*count*")));
+        }
+        Token first = peek();
+        Path path = parsePath();
+        if (peek().type() == TType.LPAREN) {
+            throw validationEx("Unexpected path component at " + position(first));
+        }
+        return path;
+    }
+
+    private void checkNoTableAlias() {
+        if (peek().type() == TType.IDENT) {
+            if ("AS".equalsIgnoreCase(peek().value())) {
+                advance();
+                if (peek().type() == TType.IDENT) {
+                    advance();
+                }
+            } else {
+                advance();
+            }
+            throw validationEx("Aliasing is not supported");
+        }
     }
 
     private List<OrderTerm> parseOrderBy() {
@@ -475,6 +516,9 @@ public class DynamoDbPartiQLParser {
         if (peek().type() == TType.DOT) {
             throw validationEx("FROM clause may only contain a single table name");
         }
+        if (peek().type() != TType.VALUE) {
+            throw validationEx("Statement wasn't well formed, can't be processed: Unexpected token after expression");
+        }
         consume(TType.VALUE);
         consume(TType.LBRACE);
         return new Stmt.Insert(table, parseTupleFields(null));
@@ -499,6 +543,7 @@ public class DynamoDbPartiQLParser {
         consume(TType.UPDATE);
         String table = expectTableName();
         String index = parseIndexQualifier();
+        checkNoTableAlias();
         List<SetClause> sets = new ArrayList<>();
         List<Path> removes = new ArrayList<>();
         while (peek().type() == TType.SET || peek().type() == TType.REMOVE) {
@@ -522,6 +567,7 @@ public class DynamoDbPartiQLParser {
         consume(TType.FROM);
         String table = expectTableName();
         String index = parseIndexQualifier();
+        checkNoTableAlias();
         List<Cond> where = new ArrayList<>();
         if (peek().type() == TType.WHERE) {
             advance();
@@ -549,8 +595,12 @@ public class DynamoDbPartiQLParser {
     private Stmt.Delete parseDelete() {
         consume(TType.DELETE);
         consume(TType.FROM);
+        if (peek().type() != TType.IDENT) {
+            throw validationEx("Statement wasn't well formed, can't be processed: Expected identifier for simple path");
+        }
         String table = expectTableName();
         String index = parseIndexQualifier();
+        checkNoTableAlias();
         consume(TType.WHERE);
         List<Cond> where = parseConditions();
         Returning returning = parseReturning();
@@ -618,6 +668,12 @@ public class DynamoDbPartiQLParser {
     }
 
     private List<Cond> parseConditions() {
+        if (peek().type() == TType.ORDER) {
+            throw validationEx("Statement wasn't well formed, can't be processed: Unexpected keyword");
+        }
+        if (peek().type() == TType.EOF || peek().type() == TType.SEMICOLON) {
+            throw validationEx("Statement wasn't well formed, can't be processed: Unexpected term");
+        }
         Cond cond = parseOr();
         return cond instanceof Cond.And and ? and.operands() : List.of(cond);
     }
@@ -627,6 +683,10 @@ public class DynamoDbPartiQLParser {
         operands.add(parseAnd());
         while (peek().type() == TType.OR) {
             advance();
+            if (peek().type() == TType.EOF || peek().type() == TType.SEMICOLON) {
+                throw validationEx(
+                        "Statement wasn't well formed, can't be processed: Missing right-hand side expression of infix operator");
+            }
             operands.add(parseAnd());
         }
         return operands.size() == 1 ? operands.getFirst() : new Cond.Or(List.copyOf(operands));
@@ -637,6 +697,10 @@ public class DynamoDbPartiQLParser {
         addAndOperand(operands, parseNot());
         while (peek().type() == TType.AND) {
             advance();
+            if (peek().type() == TType.EOF || peek().type() == TType.SEMICOLON) {
+                throw validationEx(
+                        "Statement wasn't well formed, can't be processed: Missing right-hand side expression of infix operator");
+            }
             addAndOperand(operands, parseNot());
         }
         return operands.size() == 1 ? operands.getFirst() : new Cond.And(List.copyOf(operands));
@@ -653,6 +717,9 @@ public class DynamoDbPartiQLParser {
     private Cond parseNot() {
         if (peek().type() == TType.NOT) {
             advance();
+            if (peek().type() == TType.EOF || peek().type() == TType.SEMICOLON) {
+                throw validationEx("Statement wasn't well formed, can't be processed: Unexpected term");
+            }
             return new Cond.Not(parseNot());
         }
         return parseComparison();
@@ -752,8 +819,14 @@ public class DynamoDbPartiQLParser {
     }
 
     private Cond parseCond() {
+        if (peek().type() == TType.IS) {
+            throw validationEx("Statement wasn't well formed, can't be processed: Unexpected operator");
+        }
         if (peek().type() == TType.LPAREN) {
             advance();
+            if (peek().type() == TType.EOF || peek().type() == TType.SEMICOLON) {
+                throw validationEx("Statement wasn't well formed, can't be processed: Unexpected term");
+            }
             Cond grouped = parseOr();
             consume(TType.RPAREN);
             return grouped;
@@ -787,10 +860,38 @@ public class DynamoDbPartiQLParser {
             return new Cond.AttributeType(path, type);
         }
         if (peekFunction("attribute_exists") || peekFunction("attribute_not_exists")) {
-            boolean exists = "attribute_exists".equalsIgnoreCase(advance().value());
+            Token fnToken = advance();
+            String fnName = fnToken.value().toLowerCase(Locale.ROOT);
+            boolean exists = "attribute_exists".equals(fnName);
             consume(TType.LPAREN);
-            Path path = parsePath();
+            if (peek().type() == TType.RPAREN) {
+                advance();
+                throw validationEx("Incorrect number of operands for operator or function; operator or function: "
+                        + fnName + ", number of operands: 0");
+            }
+            boolean firstIsPath = peek().type() == TType.IDENT;
+            Path path = firstIsPath ? parsePath() : null;
+            if (!firstIsPath) {
+                parseValue();
+            }
+            int count = 1;
+            while (peek().type() == TType.COMMA) {
+                advance();
+                if (peek().type() == TType.IDENT) {
+                    parsePath();
+                } else {
+                    parseValue();
+                }
+                count++;
+            }
             consume(TType.RPAREN);
+            if (count != 1) {
+                throw validationEx("Incorrect number of operands for operator or function; operator or function: "
+                        + fnName + ", number of operands: " + count);
+            }
+            if (!firstIsPath) {
+                throw validationEx("Operator or function requires a document path; operator or function: " + fnName);
+            }
             return new Cond.Missing(path, exists);
         }
         if (peekFunction("size")) {
@@ -804,6 +905,10 @@ public class DynamoDbPartiQLParser {
                 requireOrdered(op, val);
             }
             return new Cond.SizeCmp(path, op, val);
+        }
+        if (peek().type() == TType.IDENT && pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TType.LPAREN) {
+            Token fn = advance();
+            throw validationEx("Unrecognized function: " + fn.value().toLowerCase(Locale.ROOT) + " at " + position(fn));
         }
         Path path = parsePath();
         if (peek().type() == TType.BETWEEN) {
@@ -945,15 +1050,44 @@ public class DynamoDbPartiQLParser {
         Token function = advance();
         String name = function.value().toUpperCase(Locale.ROOT);
         consume(TType.LPAREN);
+        if (peek().type() == TType.RPAREN) {
+            advance();
+            throw validationEx(name + " must have exactly two arguments at " + position(function));
+        }
         Token firstArgument = peek();
-        if (!parsePath().equals(target)) {
+        Path firstPath = null;
+        if (firstArgument.type() == TType.IDENT) {
+            firstPath = parsePath();
+        } else {
+            parseValue();
+        }
+        if (peek().type() != TType.COMMA) {
+            consume(TType.RPAREN);
+            throw validationEx(name + " must have exactly two arguments at " + position(function));
+        }
+        advance();
+        PVal bag = peek().type() == TType.IDENT ? null : parseValue();
+        if (bag == null) {
+            parsePath();
+        }
+        if (peek().type() == TType.COMMA) {
+            while (peek().type() == TType.COMMA) {
+                advance();
+                if (peek().type() == TType.IDENT) {
+                    parsePath();
+                } else {
+                    parseValue();
+                }
+            }
+            consume(TType.RPAREN);
+            throw validationEx(name + " must have exactly two arguments at " + position(function));
+        }
+        consume(TType.RPAREN);
+        if (firstPath == null || !firstPath.equals(target)) {
             throw validationEx("The first argument to " + name + " must equal the assignment value at "
                     + position(function));
         }
-        consume(TType.COMMA);
-        PVal bag = parseValue();
-        consume(TType.RPAREN);
-        if (!SET_TYPES.contains(typeCode(bag))) {
+        if (bag == null || !SET_TYPES.contains(typeCode(bag))) {
             throw validationEx("The second argument to " + name + " must be a value with type SET at "
                     + position(firstArgument));
         }
@@ -994,6 +1128,12 @@ public class DynamoDbPartiQLParser {
             switch (peek().type()) {
                 case DOT -> {
                     advance();
+                    Token next = peek();
+                    if (next.type() != TType.IDENT
+                            || (next.start() >= 0 && statement.charAt(next.start()) != '"'
+                                    && "INNER".equalsIgnoreCase(next.value()))) {
+                        throw validationEx("Statement wasn't well formed, can't be processed: Invalid path dot component");
+                    }
                     segments.add(new Seg.Name(expectIdent()));
                 }
                 case LBRACKET -> {
@@ -1050,6 +1190,16 @@ public class DynamoDbPartiQLParser {
             }
             case LBRACKET, LBRACE, LBAG -> parseCollection(t, nested);
             case PLUS, MINUS -> parseSignedNumber(t, nested);
+            case IDENT -> {
+                if (peek().type() == TType.LPAREN) {
+                    throw validationEx("Unsupported data type: " + t.value().toLowerCase(Locale.ROOT)
+                            + " under key " + nested + " at " + position(t));
+                }
+                if ("LIKE".equalsIgnoreCase(t.value())) {
+                    throw validationEx("Statement wasn't well formed, can't be processed: Unexpected operator");
+                }
+                throw validationEx("Expected value literal or ?, got: " + t.value());
+            }
             default -> throw validationEx("Expected value literal or ?, got: " + t.value());
         };
     }
@@ -1058,6 +1208,14 @@ public class DynamoDbPartiQLParser {
     private static final BigDecimal MIN_LITERAL_ABS_NONZERO = new BigDecimal("1E-130");
 
     private static PVal.Num validateNumberLiteral(String raw, String nested) {
+        int eIdx = Math.max(raw.indexOf('e'), raw.indexOf('E'));
+        if (eIdx >= 0) {
+            try {
+                Integer.parseInt(raw.substring(eIdx + 1));
+            } catch (NumberFormatException e) {
+                throw validationEx("Statement wasn't well formed, can't be processed: ");
+            }
+        }
         BigDecimal bd;
         try {
             bd = new BigDecimal(raw);

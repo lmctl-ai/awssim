@@ -162,14 +162,15 @@ public class NativeDynamoDbJsonHandler {
                     pt.path("ReadCapacityUnits").asLong(5), pt.path("WriteCapacityUnits").asLong(5));
         }
 
+        List<String> indexNameErrors = new ArrayList<>();
         List<GlobalSecondaryIndex> gsis = new ArrayList<>();
         JsonNode gsiArray = request.path("GlobalSecondaryIndexes");
         if (!gsiArray.isMissingNode() && gsiArray.isArray()) {
             var gsiPosition = 0;
             for (JsonNode gsiNode : gsiArray) {
                 gsiPosition++;
-                String indexName = requireIndexName(gsiNode,
-                        memberPrefix + "globalSecondaryIndexes." + gsiPosition + ".member");
+                String indexName = collectIndexNameErrors(gsiNode,
+                        memberPrefix + "globalSecondaryIndexes." + gsiPosition + ".member", indexNameErrors);
                 List<KeySchemaElement> gsiKeySchema = new ArrayList<>();
                 gsiNode.path("KeySchema").forEach(ks ->
                         gsiKeySchema.add(new KeySchemaElement(
@@ -210,8 +211,8 @@ public class NativeDynamoDbJsonHandler {
             var lsiPosition = 0;
             for (JsonNode lsiNode : lsiArray) {
                 lsiPosition++;
-                String indexName = requireIndexName(lsiNode,
-                        memberPrefix + "localSecondaryIndexes." + lsiPosition + ".member");
+                String indexName = collectIndexNameErrors(lsiNode,
+                        memberPrefix + "localSecondaryIndexes." + lsiPosition + ".member", indexNameErrors);
                 List<KeySchemaElement> lsiKeySchema = new ArrayList<>();
                 lsiNode.path("KeySchema").forEach(ks ->
                         lsiKeySchema.add(new KeySchemaElement(
@@ -228,6 +229,7 @@ public class NativeDynamoDbJsonHandler {
                 lsis.add(new LocalSecondaryIndex(indexName, lsiKeySchema, null, projectionType, lsiNonKeyAttributes));
             }
         }
+        throwValidationErrors(indexNameErrors);
 
         List<DynamoDbService.VectorIndexCreate> vectorIndexes = new ArrayList<>();
         JsonNode vectorIndexArray = request.path("VectorIndexes");
@@ -295,15 +297,15 @@ public class NativeDynamoDbJsonHandler {
 
     // AWS reports an empty list as a length constraint on the 1-based member path, before the
     // projection type check. A null NonKeyAttributes counts as not specified.
-    private static String requireIndexName(JsonNode node, String memberPath) {
+    private static String collectIndexNameErrors(JsonNode node, String memberPath, List<String> errors) {
         JsonNode indexNameNode = node.path("IndexName");
         String constraint = " at '" + memberPath + ".indexName' failed to satisfy constraint: ";
         if (indexNameNode.isMissingNode() || indexNameNode.isNull()) {
-            throwValidationErrors(List.of("Value null" + constraint + "Member must not be null"));
+            errors.add("Value null" + constraint + "Member must not be null");
+            return null;
         }
         String indexName = indexNameNode.asText();
         String value = "Value '" + indexName + "'" + constraint;
-        List<String> errors = new ArrayList<>();
         if (!INDEX_NAME_CHARS.matcher(indexName).matches()) {
             errors.add(value + "Member must satisfy regular expression pattern: [a-zA-Z0-9_.-]+");
         }
@@ -313,6 +315,12 @@ public class NativeDynamoDbJsonHandler {
         if (255 < indexName.length()) {
             errors.add(value + "Member must have length less than or equal to 255");
         }
+        return indexName;
+    }
+
+    private static String requireIndexName(JsonNode node, String memberPath) {
+        List<String> errors = new ArrayList<>();
+        String indexName = collectIndexNameErrors(node, memberPath, errors);
         throwValidationErrors(errors);
         return indexName;
     }
@@ -581,11 +589,14 @@ public class NativeDynamoDbJsonHandler {
         }
         DynamoDbExpressionSize.checkWrite(conditionExpression, "ConditionExpression");
         DynamoDbAttributeValueValidator.requireNestingWithinLimit(item);
-        DynamoDbAttributeValueValidator.requireNestingWithinLimit(exprAttrValues);
+        DynamoDbAttributeValueValidator.requireEavNestingWithinLimit(exprAttrValues, true);
+        DynamoDbNumberUtils.requireStorable(item, true);
         DynamoDbNumberUtils.requireStorable(exprAttrValues, true);
 
         JsonNode expected = request.has("Expected") ? request.get("Expected") : null;
-        DynamoDbAttributeValueValidator.requireNestingWithinLimit(legacyValues(expected));
+        ObjectNode expectedValues = legacyValues(expected);
+        DynamoDbAttributeValueValidator.requireNestingWithinLimit(expectedValues);
+        DynamoDbNumberUtils.requireStorable(expectedValues, true);
         String conditionalOperator = request.has("ConditionalOperator")
                 ? request.get("ConditionalOperator").asText() : "AND";
 
@@ -608,7 +619,9 @@ public class NativeDynamoDbJsonHandler {
         checkUnusedEan(exprAttrNames, extractHashTokens(conditionExpression));
         checkUnusedEav(exprAttrValues, extractColonTokens(conditionExpression));
 
-        validateItemSets(item);
+        validateItemSets(item, true);
+        validateItemSets(exprAttrValues, true);
+        validateItemSets(expectedValues, true);
 
         JsonNode oldItem = null;
         if ("ALL_OLD".equals(returnValues) || expected != null) {
@@ -655,6 +668,8 @@ public class NativeDynamoDbJsonHandler {
             DynamoDbExpressionSize.checkRead(projectionExpression, "ProjectionExpression");
             ProjectionEvaluator.validateExpression(projectionExpression, exprAttrNames);
         }
+        DynamoDbNumberUtils.requireStorable(key, false);
+        validateItemSets(key, false);
 
         JsonNode item = dynamoDbService.getItem(tableName, key, region);
         TableDefinition table = item != null ? dynamoDbService.describeTable(tableName, region) : null;
@@ -707,10 +722,13 @@ public class NativeDynamoDbJsonHandler {
                     + String.join("; ", delValidationErrors), 400);
         }
         DynamoDbExpressionSize.checkWrite(conditionExpression, "ConditionExpression");
-        DynamoDbAttributeValueValidator.requireNestingWithinLimit(exprAttrValues);
+        DynamoDbAttributeValueValidator.requireEavNestingWithinLimit(exprAttrValues, true);
+        DynamoDbNumberUtils.requireStorable(key, true);
         DynamoDbNumberUtils.requireStorable(exprAttrValues, true);
         JsonNode expectedDel = request.has("Expected") ? request.get("Expected") : null;
-        DynamoDbAttributeValueValidator.requireNestingWithinLimit(legacyValues(expectedDel));
+        ObjectNode expectedDelValues = legacyValues(expectedDel);
+        DynamoDbAttributeValueValidator.requireNestingWithinLimit(expectedDelValues);
+        DynamoDbNumberUtils.requireStorable(expectedDelValues, true);
 
         if (conditionExpression != null && expectedDel != null) {
             throw new AwsException("ValidationException",
@@ -730,6 +748,10 @@ public class NativeDynamoDbJsonHandler {
         // Reject ExpressionAttributeNames/Values entries not referenced by ConditionExpression (AWS parity, #2893)
         checkUnusedEan(exprAttrNames, extractHashTokens(conditionExpression));
         checkUnusedEav(exprAttrValues, extractColonTokens(conditionExpression));
+
+        validateItemSets(key, true);
+        validateItemSets(exprAttrValues, true);
+        validateItemSets(expectedDelValues, true);
 
         String condOpDel = request.has("ConditionalOperator")
                 ? request.get("ConditionalOperator").asText() : "AND";
@@ -777,16 +799,18 @@ public class NativeDynamoDbJsonHandler {
         requireValidReturnConsumedCapacity(request);
         DynamoDbExpressionSize.checkWrite(updateExpression, "UpdateExpression");
         DynamoDbExpressionSize.checkWrite(conditionExpression, "ConditionExpression");
-        DynamoDbAttributeValueValidator.requireNestingWithinLimit(exprAttrValues);
+        DynamoDbAttributeValueValidator.requireEavNestingWithinLimit(exprAttrValues, true);
+        DynamoDbNumberUtils.requireStorable(key, true);
         DynamoDbNumberUtils.requireStorable(exprAttrValues, true);
         var attributeUpdateValues = legacyValues(attributeUpdates);
         DynamoDbAttributeValueValidator.requireNestingWithinLimit(attributeUpdateValues);
         DynamoDbNumberUtils.requireStorable(attributeUpdateValues, true);
-        DynamoDbAttributeValueValidator.requireNestingWithinLimit(
-                legacyValues(request.has("Expected") ? request.get("Expected") : null));
+        JsonNode expectedUpd = request.has("Expected") ? request.get("Expected") : null;
+        ObjectNode expectedUpdValues = legacyValues(expectedUpd);
+        DynamoDbAttributeValueValidator.requireNestingWithinLimit(expectedUpdValues);
+        DynamoDbNumberUtils.requireStorable(expectedUpdValues, true);
 
         JsonNode updateData = attributeUpdates.isMissingNode() ? null : attributeUpdates;
-        JsonNode expectedUpd = request.has("Expected") ? request.get("Expected") : null;
         String conditionalOperatorUpd = request.has("ConditionalOperator")
                 ? request.get("ConditionalOperator").asText() : "AND";
 
@@ -841,6 +865,11 @@ public class NativeDynamoDbJsonHandler {
             requireDefinedTokens(conditionExpression, "ConditionExpression", exprAttrNames, exprAttrValues);
             ExpressionEvaluator.validateSemantics(conditionExpression, "ConditionExpression", exprAttrNames, exprAttrValues);
         }
+
+        validateItemSets(key, true);
+        validateItemSets(exprAttrValues, true);
+        validateItemSets(attributeUpdateValues, true);
+        validateItemSets(expectedUpdValues, true);
 
         if (expectedUpd != null) {
             JsonNode existingForUpd = dynamoDbService.getItem(tableName, key, region);
@@ -1112,8 +1141,17 @@ public class NativeDynamoDbJsonHandler {
         DynamoDbExpressionSize.checkRead(projectionExpression, "ProjectionExpression");
         DynamoDbAttributeValueValidator.requireNestingWithinLimit(exprAttrValues);
         DynamoDbNumberUtils.requireStorable(exprAttrValues, false);
-        DynamoDbAttributeValueValidator.requireNestingWithinLimit(legacyValues(keyConditions), false);
-        DynamoDbAttributeValueValidator.requireNestingWithinLimit(legacyValues(queryFilter), false);
+        ObjectNode keyConditionValues = legacyValues(keyConditions);
+        ObjectNode queryFilterValues = legacyValues(queryFilter);
+        DynamoDbAttributeValueValidator.requireNestingWithinLimit(keyConditionValues, false);
+        DynamoDbAttributeValueValidator.requireNestingWithinLimit(queryFilterValues, false);
+        DynamoDbNumberUtils.requireStorable(keyConditionValues, false);
+        DynamoDbNumberUtils.requireStorable(queryFilterValues, false);
+        DynamoDbNumberUtils.requireStorable(exclusiveStartKey, false);
+        validateItemSets(exprAttrValues, false);
+        validateItemSets(keyConditionValues, false);
+        validateItemSets(queryFilterValues, false);
+        validateItemSets(exclusiveStartKey, false);
         ExpressionEvaluator.validateSyntax(keyConditionExpr, "KeyConditionExpression");
         ExpressionEvaluator.validateSyntax(filterExpr, "FilterExpression");
         // DynamoDB reports filter errors before projection errors, and projection before key-condition.
@@ -1355,6 +1393,23 @@ public class NativeDynamoDbJsonHandler {
     private static final int MAX_VECTOR_SEARCH_TOP_K = 100;
 
     private Response handleSearchVectors(JsonNode request, String region) {
+        var svFields = request.fields();
+        while (svFields.hasNext()) {
+            var entry = svFields.next();
+            if (entry.getValue().isNull()) {
+                String expected = switch (entry.getKey()) {
+                    case "IndexName", "TableName" -> "a string";
+                    case "SearchVector" -> "a sequence";
+                    case "TopK" -> "i32";
+                    default -> null;
+                };
+                if (expected != null) {
+                    throw new AwsException("SerializationException",
+                            "invalid type: null, expected " + expected + " at line 1 column 1", 400);
+                }
+            }
+        }
+        requireSearchVectorsMember(request, "TableName");
         requireSearchVectorsMember(request, "SearchVector");
         requireSearchVectorsMember(request, "IndexName");
         String tableName = request.path("TableName").asText();
@@ -1463,8 +1518,14 @@ public class NativeDynamoDbJsonHandler {
             var entry = tables.next();
             List<JsonNode> writes = new ArrayList<>();
             for (JsonNode writeReq : entry.getValue()) {
-                DynamoDbAttributeValueValidator.requireNestingWithinLimit(
-                        writeReq.path("PutRequest").get("Item"), false);
+                JsonNode putItem = writeReq.path("PutRequest").get("Item");
+                JsonNode delKey = writeReq.path("DeleteRequest").get("Key");
+                DynamoDbAttributeValueValidator.requireNestingWithinLimit(putItem, false);
+                DynamoDbAttributeValueValidator.requireNestingWithinLimit(delKey, false);
+                DynamoDbNumberUtils.requireStorable(putItem, false);
+                DynamoDbNumberUtils.requireStorable(delKey, false);
+                validateItemSets(putItem, false);
+                validateItemSets(delKey, false);
                 writes.add(writeReq);
             }
             items.put(entry.getKey(), writes);
@@ -1590,6 +1651,12 @@ public class NativeDynamoDbJsonHandler {
                         "1 validation error detected: Value at 'RequestItems." + entry.getKey()
                         + ".member.Keys' failed to satisfy constraint: "
                         + "Member must have length less than or equal to 100", 400);
+            }
+            if (keysNode != null && keysNode.isArray()) {
+                for (JsonNode k : keysNode) {
+                    DynamoDbNumberUtils.requireStorable(k, false);
+                    validateItemSets(k, false);
+                }
             }
         }
 
@@ -1898,7 +1965,13 @@ public class NativeDynamoDbJsonHandler {
                 // so even an unused or condition-only value fails the request.
                 DynamoDbAttributeValueValidator.requireNestingWithinLimit(op.get("Item"), false);
                 DynamoDbAttributeValueValidator.requireNestingWithinLimit(op.get("Key"), false);
-                DynamoDbAttributeValueValidator.requireNestingWithinLimit(opExprAttrValues, false);
+                DynamoDbAttributeValueValidator.requireEavNestingWithinLimit(opExprAttrValues, false);
+                DynamoDbNumberUtils.requireStorable(op.get("Item"), false);
+                DynamoDbNumberUtils.requireStorable(op.get("Key"), false);
+                DynamoDbNumberUtils.requireStorable(opExprAttrValues, false);
+                validateItemSets(op.get("Item"), false);
+                validateItemSets(op.get("Key"), false);
+                validateItemSets(opExprAttrValues, false);
                 DynamoDbExpressionSize.checkRead(op.path("UpdateExpression").textValue(), "UpdateExpression");
                 DynamoDbExpressionSize.checkReadWithSize(conditionExpression, "ConditionExpression");
                 ExpressionEvaluator.validateSyntax(conditionExpression, "ConditionExpression");
@@ -2051,6 +2124,10 @@ public class NativeDynamoDbJsonHandler {
         JsonNode transactItemsNode = requireValidTransactRequest(request);
 
         for (JsonNode txItem : transactItemsNode) {
+            JsonNode getKey = txItem.path("Get").get("Key");
+            DynamoDbAttributeValueValidator.requireNestingWithinLimit(getKey, false);
+            DynamoDbNumberUtils.requireStorable(getKey, false);
+            validateItemSets(getKey, false);
             DynamoDbExpressionSize.checkRead(txItem.path("Get").path("ProjectionExpression").textValue(),
                     "ProjectionExpression");
         }
@@ -2317,54 +2394,98 @@ public class NativeDynamoDbJsonHandler {
      * Builds a ConsumedCapacity node if the request includes ReturnConsumedCapacity.
      * Uses simple estimates: 0.5 RCU per item read, 1.0 WCU per item written.
      */
-    private void validateItemSets(JsonNode item) {
+    private void validateItemSets(JsonNode item, boolean inValidationEnvelope) {
         if (item == null || !item.isObject()) return;
         item.fields().forEachRemaining(entry -> {
             JsonNode attr = entry.getValue();
-            checkAttrSets(attr);
+            checkAttrSets(attr, inValidationEnvelope);
         });
     }
 
-    private void checkAttrSets(JsonNode attr) {
+    private void checkAttrSets(JsonNode attr, boolean inValidationEnvelope) {
         if (attr == null) return;
+        String env = inValidationEnvelope ? "1 validation error detected: " : "";
         if (attr.has("NULL") && !attr.get("NULL").asBoolean()) {
             throw new AwsException("ValidationException",
-                    "One or more parameter values were invalid: Null attribute value types must have the value of true", 400);
+                    env + "One or more parameter values were invalid: Null attribute value types must have the value of true", 400);
         }
         if (attr.has("SS")) {
             JsonNode ss = attr.get("SS");
             if (ss.isEmpty()) throw new AwsException("ValidationException",
-                    "One or more parameter values were invalid: An string set  may not be empty", 400);
-            Set<String> seen = new HashSet<>();
-            for (JsonNode e : ss) {
-                if (!seen.add(e.asText())) throw new AwsException("ValidationException",
-                        "One or more parameter values were invalid: Input collection " + formatSetForError(ss) + " contains duplicates.", 400);
+                    env + "One or more parameter values were invalid: An string set  may not be empty", 400);
+            java.util.TreeSet<String> seen = new java.util.TreeSet<>(
+                    (a, b) -> java.util.Arrays.compareUnsigned(
+                            a.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                            b.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            for (int i = 0; i < ss.size(); i++) {
+                String val = ss.get(i).asText();
+                if (!seen.add(val)) {
+                    throw new AwsException("ValidationException",
+                            env + "One or more parameter values were invalid: Input collection "
+                            + formatDuplicateSetForError(seen, ss, i, ", ") + " contains duplicates.", 400);
+                }
             }
         } else if (attr.has("NS")) {
             JsonNode ns = attr.get("NS");
             if (ns.isEmpty()) throw new AwsException("ValidationException",
-                    "One or more parameter values were invalid: An number set  may not be empty", 400);
+                    env + "One or more parameter values were invalid: An number set  may not be empty", 400);
             Set<String> seen = new HashSet<>();
             for (JsonNode e : ns) {
-                if (!seen.add(e.asText())) throw new AwsException("ValidationException",
-                        "One or more parameter values were invalid: Input collection " + formatSetForError(ns) + " contains duplicates.", 400);
+                String norm;
+                try {
+                    norm = DynamoDbNumberUtils.validateAndNormalize(e.asText());
+                } catch (Exception ex) {
+                    norm = e.asText();
+                }
+                if (!seen.add(norm)) throw new AwsException("ValidationException",
+                        env + "One or more parameter values were invalid: Input collection contains duplicates.", 400);
             }
         } else if (attr.has("BS")) {
             JsonNode bs = attr.get("BS");
             if (bs.isEmpty()) throw new AwsException("ValidationException",
-                    "One or more parameter values were invalid: Binary sets should not be empty", 400);
-            Set<String> seen = new HashSet<>();
-            for (JsonNode e : bs) {
-                // A binary set names its type, and AWS leaves out the space before "of".
-                if (!seen.add(e.asText())) throw new AwsException("ValidationException",
-                        "One or more parameter values were invalid: Input collection " + formatSetForError(bs)
-                        + "of type BS contains duplicates.", 400);
+                    env + "One or more parameter values were invalid: Binary sets should not be empty", 400);
+            java.util.TreeSet<String> seen = new java.util.TreeSet<>(
+                    (a, b) -> {
+                        try {
+                            return java.util.Arrays.compareUnsigned(
+                                    java.util.Base64.getDecoder().decode(a),
+                                    java.util.Base64.getDecoder().decode(b));
+                        } catch (Exception ex) {
+                            return a.compareTo(b);
+                        }
+                    });
+            for (int i = 0; i < bs.size(); i++) {
+                String val = bs.get(i).asText();
+                if (!seen.add(val)) {
+                    // A binary set names its type, and AWS leaves out the space before "of".
+                    throw new AwsException("ValidationException",
+                            env + "One or more parameter values were invalid: Input collection "
+                            + formatDuplicateSetForError(seen, bs, i, ",")
+                            + "of type BS contains duplicates.", 400);
+                }
             }
         } else if (attr.has("M")) {
-            attr.get("M").fields().forEachRemaining(e -> checkAttrSets(e.getValue()));
+            attr.get("M").fields().forEachRemaining(e -> checkAttrSets(e.getValue(), inValidationEnvelope));
         } else if (attr.has("L")) {
-            attr.get("L").forEach(this::checkAttrSets);
+            attr.get("L").forEach(e -> checkAttrSets(e, inValidationEnvelope));
         }
+    }
+
+    private String formatDuplicateSetForError(Set<String> seenPrefix, JsonNode arr, int dupIdx, String sep) {
+        StringBuilder sb = new StringBuilder("[");
+        boolean first = true;
+        for (String s : seenPrefix) {
+            if (!first) sb.append(sep);
+            sb.append('"').append(s).append('"');
+            first = false;
+        }
+        for (int j = dupIdx; j < arr.size(); j++) {
+            if (!first) sb.append(sep);
+            sb.append('"').append(arr.get(j).asText()).append('"');
+            first = false;
+        }
+        sb.append("]");
+        return sb.toString();
     }
 
     // ── Expression token utilities ──
@@ -3252,6 +3373,14 @@ public class NativeDynamoDbJsonHandler {
     // eu-west-1, 2026-09-02).
     private void requireBatchSelectReadsByKey(DynamoDbPartiQLParser.Stmt.Select select, String region) {
         if (select.index() != null) {
+            TableDefinition table = dynamoDbService.findTable(select.table(), region).orElse(null);
+            if (table != null && table.findGsi(select.index()).isPresent()) {
+                DynamoDbAccessPath accessPath = DynamoDbAccessPath.resolve(table, select.index());
+                if (accessPath.partitionKeyNames().size() > 1 || accessPath.sortKeyNames().size() > 1) {
+                    throw new AwsException("ValidationException",
+                            "PartiQL statements cannot be executed on tables with multi-attribute HASH keys or multi-attribute RANGE keys.", 400);
+                }
+            }
             throw batchSelectNeedsKey();
         }
         TableDefinition table = dynamoDbService.requireTableForItemCall(select.table(), region);
@@ -3277,10 +3406,80 @@ public class NativeDynamoDbJsonHandler {
         }
         List<JsonNode> params = new ArrayList<>();
         for (JsonNode parameter : node) {
-            DynamoDbAttributeValueValidator.requireParameterNestingWithinLimit(parameter);
-            checkAttrSets(parameter);
+            validatePartiQLParameter(parameter, 1);
+            checkAttrSets(parameter, false);
             params.add(parameter);
         }
         return params;
+    }
+
+    private static void validatePartiQLParameter(JsonNode value, int depth) {
+        if (value == null || !value.isObject()) {
+            return;
+        }
+        if (depth > DynamoDbAttributeValueValidator.MAX_NESTING_LEVELS + 1) {
+            throw new AwsException("ValidationException",
+                    DynamoDbAttributeValueValidator.NESTING_EXCEEDED
+                    + ": Attributes in the item have nested levels beyond supported limit", 400);
+        }
+        if (value.has("N") && value.get("N").isTextual()) {
+            validatePartiQLParamNumber(value.get("N").asText());
+        } else if (value.has("NS") && value.get("NS").isArray()) {
+            for (JsonNode member : value.get("NS")) {
+                if (member.isTextual()) {
+                    validatePartiQLParamNumber(member.asText());
+                }
+            }
+        } else if (value.has("L") && value.get("L").isArray()) {
+            for (JsonNode child : value.get("L")) {
+                validatePartiQLParameter(child, depth + 1);
+            }
+        } else if (value.has("M") && value.get("M").isObject()) {
+            for (JsonNode child : value.get("M")) {
+                validatePartiQLParameter(child, depth + 1);
+            }
+        }
+    }
+
+    private static void validatePartiQLParamNumber(String raw) {
+        if (raw == null || raw.isEmpty()) {
+            throw new AwsException("ValidationException", "The parameter cannot be converted to a numeric value", 400);
+        }
+        if (!raw.equals(raw.trim())) {
+            throw new AwsException("ValidationException",
+                    "The parameter cannot be converted to a numeric value: " + raw, 400);
+        }
+        int eIdx = Math.max(raw.indexOf('e'), raw.indexOf('E'));
+        if (eIdx >= 0) {
+            try {
+                Integer.parseInt(raw.substring(eIdx + 1));
+            } catch (NumberFormatException e) {
+                throw new AwsException("ValidationException",
+                        "The parameter cannot be converted to a numeric value: " + raw, 400);
+            }
+        }
+        java.math.BigDecimal bd;
+        try {
+            bd = new java.math.BigDecimal(raw);
+        } catch (NumberFormatException e) {
+            throw new AwsException("ValidationException",
+                    "The parameter cannot be converted to a numeric value: " + raw, 400);
+        }
+        java.math.BigDecimal stripped = bd.stripTrailingZeros();
+        if (stripped.precision() > 38) {
+            throw new AwsException("ValidationException",
+                    "Attempting to store more than 38 significant digits in a Number", 400);
+        }
+        if (stripped.signum() != 0) {
+            int mag = stripped.precision() - stripped.scale();
+            if (mag > 126) {
+                throw new AwsException("ValidationException",
+                        "Number overflow. Attempting to store a number with magnitude larger than supported range", 400);
+            }
+            if (mag < -129) {
+                throw new AwsException("ValidationException",
+                        "Number underflow. Attempting to store a number with magnitude smaller than supported range", 400);
+            }
+        }
     }
 }

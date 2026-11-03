@@ -63,48 +63,144 @@ final class DynamoDbItemSize {
         return total <= MAX_ITEM_SIZE && written + actionCost <= MAX_ITEM_SIZE;
     }
 
-    static int updateExpressionCost(String expression) {
+    static boolean updateStatementWithinLimit(String expression, JsonNode exprAttrNames, JsonNode exprAttrValues) {
+        if (expression == null || expression.isBlank()) {
+            return true;
+        }
+        return updateExpressionStatementCharge(expression, exprAttrNames, exprAttrValues) <= MAX_ITEM_SIZE;
+    }
+
+    static int updateExpressionStatementCharge(String expression, JsonNode exprAttrNames, JsonNode exprAttrValues) {
         int cost = UPDATE_COST;
         String remaining = expression.trim().replaceAll("\\s+", " ");
         while (!remaining.isEmpty()) {
-            String keyword = remaining.substring(0, Math.max(remaining.indexOf(' '), 0)).toUpperCase(Locale.ROOT);
+            int spaceIdx = remaining.indexOf(' ');
+            if (spaceIdx < 0) break;
+            String keyword = remaining.substring(0, spaceIdx).toUpperCase(Locale.ROOT);
             String body = remaining.substring(keyword.length()).trim();
             int nextClause = DynamoDbService.findNextClauseKeyword(body);
             String actions = nextClause < 0 ? body : body.substring(0, nextClause);
             remaining = nextClause < 0 ? "" : body.substring(nextClause);
             while (!actions.isBlank()) {
                 int comma = DynamoDbService.findNextComma(actions);
-                cost += actionCost(keyword, comma < 0 ? actions : actions.substring(0, comma));
+                String action = (comma < 0 ? actions : actions.substring(0, comma)).trim();
+                cost += statementActionCharge(keyword, action, exprAttrNames, exprAttrValues);
                 actions = comma < 0 ? "" : actions.substring(comma + 1);
             }
         }
         return cost;
     }
 
-    static int attributeUpdatesCost(JsonNode attributeUpdates) {
-        int cost = UPDATE_COST;
-        if (attributeUpdates == null || !attributeUpdates.isObject()) {
-            return cost;
-        }
-        for (JsonNode update : attributeUpdates) {
-            cost += "DELETE".equals(update.path("Action").asText("PUT"))
-                    ? REMOVE_OR_DELETE_COST : SET_OR_ADD_COST;
-        }
-        return cost;
-    }
-
-    private static int actionCost(String clause, String action) {
+    private static int statementActionCharge(String clause, String action,
+                                             JsonNode exprAttrNames, JsonNode exprAttrValues) {
         return switch (clause) {
-            case "SET" -> SET_OR_ADD_COST + (writesListElement(action) ? LIST_INDEX_COST : 0);
-            case "ADD" -> SET_OR_ADD_COST;
-            default -> REMOVE_OR_DELETE_COST;
+            case "SET" -> {
+                int eq = action.indexOf('=');
+                if (eq < 0) yield SET_OR_ADD_COST;
+                String target = action.substring(0, eq).trim();
+                String rhs = action.substring(eq + 1).trim();
+                yield SET_OR_ADD_COST + targetPathCost(target, exprAttrNames)
+                        + setRhsCharge(rhs, exprAttrNames, exprAttrValues);
+            }
+            case "ADD" -> {
+                String[] parts = action.trim().split("\\s+", 2);
+                String target = parts[0];
+                JsonNode val = parts.length > 1 && exprAttrValues != null
+                        ? exprAttrValues.get(parts[1].trim()) : null;
+                yield SET_OR_ADD_COST + targetPathCost(target, exprAttrNames) + attributeValueSize(val);
+            }
+            case "DELETE" -> {
+                String[] parts = action.trim().split("\\s+", 2);
+                yield 1 + targetPathCost(parts[0], exprAttrNames);
+            }
+            case "REMOVE" -> 1 + targetPathCost(action.trim(), exprAttrNames);
+            default -> 0;
         };
     }
 
-    private static boolean writesListElement(String action) {
-        int bracket = action.indexOf('[');
-        int assignment = action.indexOf('=');
-        return bracket >= 0 && (assignment < 0 || bracket < assignment);
+    private static int setRhsCharge(String rhs, JsonNode exprAttrNames, JsonNode exprAttrValues) {
+        int depth = 0;
+        for (int i = 0; i < rhs.length(); i++) {
+            char c = rhs.charAt(i);
+            if (c == '(' || c == '[') depth++;
+            else if (c == ')' || c == ']') depth--;
+            else if (depth == 0 && (c == '+' || c == '-')) {
+                String left = rhs.substring(0, i).trim();
+                String right = rhs.substring(i + 1).trim();
+                int opCost = (c == '+') ? 34 : 37;
+                return opCost + operandCharge(left, exprAttrNames, exprAttrValues)
+                        + operandCharge(right, exprAttrNames, exprAttrValues);
+            }
+        }
+        int lparen = rhs.indexOf('(');
+        if (lparen > 0 && rhs.endsWith(")")) {
+            String fn = rhs.substring(0, lparen).trim().toLowerCase(Locale.ROOT);
+            String inner = rhs.substring(lparen + 1, rhs.length() - 1);
+            int comma = DynamoDbService.findNextComma(inner);
+            if (comma >= 0) {
+                String arg1 = inner.substring(0, comma).trim();
+                String arg2 = inner.substring(comma + 1).trim();
+                int fnCost = "if_not_exists".equals(fn) ? 39 : "list_append".equals(fn) ? 37 : 0;
+                return fnCost + operandCharge(arg1, exprAttrNames, exprAttrValues)
+                        + operandCharge(arg2, exprAttrNames, exprAttrValues);
+            }
+        }
+        return operandCharge(rhs, exprAttrNames, exprAttrValues);
+    }
+
+    private static int operandCharge(String operand, JsonNode exprAttrNames, JsonNode exprAttrValues) {
+        String op = operand.trim();
+        if (op.startsWith(":")) {
+            JsonNode val = exprAttrValues != null ? exprAttrValues.get(op) : null;
+            return attributeValueSize(val);
+        }
+        java.util.List<Integer> segBytes = pathSegmentBytes(op, exprAttrNames);
+        int total = 1;
+        for (int b : segBytes) {
+            total += 14 + b;
+        }
+        return total;
+    }
+
+    private static int targetPathCost(String path, JsonNode exprAttrNames) {
+        java.util.List<Integer> segBytes = pathSegmentBytes(path.trim(), exprAttrNames);
+        if (segBytes.isEmpty()) return 0;
+        int total = segBytes.getFirst();
+        for (int i = 1; i < segBytes.size(); i++) {
+            total += 4 + segBytes.get(i);
+        }
+        return total;
+    }
+
+    private static java.util.List<Integer> pathSegmentBytes(String path, JsonNode exprAttrNames) {
+        java.util.List<Integer> segments = new java.util.ArrayList<>();
+        String[] dotParts = path.split("\\.");
+        for (String part : dotParts) {
+            String p = part.trim();
+            if (p.isEmpty()) continue;
+            int bracket = p.indexOf('[');
+            String namePart = bracket < 0 ? p : p.substring(0, bracket).trim();
+            if (!namePart.isEmpty()) {
+                String resolved = resolveAttrName(namePart, exprAttrNames);
+                segments.add(utf8Length(resolved));
+            }
+            int idx = bracket;
+            while (idx >= 0) {
+                int close = p.indexOf(']', idx);
+                if (close < 0) break;
+                String digits = p.substring(idx + 1, close).trim();
+                segments.add(digits.length());
+                idx = p.indexOf('[', close);
+            }
+        }
+        return segments;
+    }
+
+    private static String resolveAttrName(String token, JsonNode exprAttrNames) {
+        if (token.startsWith("#") && exprAttrNames != null && exprAttrNames.has(token)) {
+            return exprAttrNames.get(token).asText();
+        }
+        return token;
     }
 
     static int calculateItemSize(JsonNode item) {
@@ -157,7 +253,7 @@ final class DynamoDbItemSize {
         if (attr.has("NULL")) return 1;
         if (attr.has("SS")) {
             int size = 0;
-            for (JsonNode e : attr.get("SS")) size += utf8Length(e.asText()) + 1;
+            for (JsonNode e : attr.get("SS")) size += utf8Length(e.asText());
             return size;
         }
         if (attr.has("NS")) {
@@ -169,7 +265,7 @@ final class DynamoDbItemSize {
         }
         if (attr.has("BS")) {
             int size = 0;
-            for (JsonNode e : attr.get("BS")) size += binarySize(e.asText()) + 1;
+            for (JsonNode e : attr.get("BS")) size += binarySize(e.asText());
             return size;
         }
         if (attr.has("L")) {

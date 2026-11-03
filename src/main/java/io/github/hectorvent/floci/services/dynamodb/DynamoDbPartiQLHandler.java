@@ -47,7 +47,7 @@ class DynamoDbPartiQLHandler {
     // --- SELECT ---
 
     private Result executeSelect(Stmt.Select stmt, PartiQLExecuteContext ctx, String region) {
-        TableDefinition table = service.describeTable(stmt.table(), region);
+        TableDefinition table = service.requireTableForItemCall(stmt.table(), region);
         // A vector index is reachable through SearchVectors alone, and PartiQL says so
         // rather than reporting the index as missing.
         if (table.findVectorIndex(stmt.index()).isPresent()) {
@@ -65,6 +65,15 @@ class DynamoDbPartiQLHandler {
         if (ctx.consistentRead() && accessPath.isGlobalSecondaryIndex()) {
             throw new AwsException("ValidationException",
                     "Strongly consistent read is not supported on Global Secondary Indexes", 400);
+        }
+
+        if (accessPath.partitionKeyNames().size() > 1 || accessPath.sortKeyNames().size() > 1) {
+            throw new AwsException("ValidationException",
+                    "PartiQL statements cannot be executed on tables with multi-attribute HASH keys or multi-attribute RANGE keys.", 400);
+        }
+
+        if (stmt.columns().stream().map(Path::root).anyMatch("*count*"::equals)) {
+            throw new AwsException("ValidationException", "Aggregation is not supported", 400);
         }
 
         // A GSI-qualified statement can only select attributes the index
@@ -545,7 +554,7 @@ class DynamoDbPartiQLHandler {
     // --- INSERT ---
 
     private Result executeInsert(Stmt.Insert stmt, PartiQLExecuteContext ctx, String region) {
-        TableDefinition table = service.describeTable(stmt.table(), region);
+        TableDefinition table = service.requireTableForItemCall(stmt.table(), region);
         String pkName = table.getPartitionKeyName();
 
         ObjectNode item = mapper.createObjectNode();
@@ -565,7 +574,7 @@ class DynamoDbPartiQLHandler {
 
     private Result executeUpdate(Stmt.Update stmt, PartiQLExecuteContext ctx, String region) {
         requireNoIndexQualifier(stmt.index());
-        TableDefinition table = service.describeTable(stmt.table(), region);
+        TableDefinition table = service.requireTableForItemCall(stmt.table(), region);
         requireOneValuePerKey(table, stmt.where());
         ObjectNode key = buildKey(table, stmt.where());
 
@@ -621,7 +630,7 @@ class DynamoDbPartiQLHandler {
 
     private Result executeDelete(Stmt.Delete stmt, PartiQLExecuteContext ctx, String region) {
         requireNoIndexQualifier(stmt.index());
-        TableDefinition table = service.describeTable(stmt.table(), region);
+        TableDefinition table = service.requireTableForItemCall(stmt.table(), region);
         requireOneValuePerKey(table, stmt.where());
         ObjectNode key = buildKey(table, stmt.where());
 

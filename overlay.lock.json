@@ -8,6 +8,8 @@
     "io/github/hectorvent/floci/services/dynamodb/DynamoDbPartiQLParser.java": "cb0912415c513df923bd31ed2de80667fffe0eebcffdcfc8a2a7c3c2b54d3bd0",
     "io/github/hectorvent/floci/services/dynamodb/DynamoDbPartiQLKeyPlan.java": "9832e137378e0b86c6ddc4e2723b411324dfd4485fa765141d8d17778feeb26c",
     "io/github/hectorvent/floci/services/dynamodb/DynamoDbItemSize.java": "03502a2fc710b69d03db1a22b3c71d110872fa7765c80ea8b3012ef2d17bc79c",
-    "io/github/hectorvent/floci/services/dynamodb/DynamoDbWriteCapacity.java": "9381f18d80f484a1839005d4fadc27a041fbee12f5c7e8f367749a29e48635a4"
+    "io/github/hectorvent/floci/services/dynamodb/DynamoDbWriteCapacity.java": "9381f18d80f484a1839005d4fadc27a041fbee12f5c7e8f367749a29e48635a4",
+    "io/github/hectorvent/floci/services/dynamodb/DynamoDbNumberUtils.java": "ed5bdd41e044980a06fcdff2feca90f808fd3ecd453b0679fcd54b5b151e7eec",
+    "io/github/hectorvent/floci/services/dynamodb/DynamoDbAttributeValueValidator.java": "adf0c1842bf871d597b3666cfb22e9194b08d91a672ba3a48e1f95b625bfba4d"
   }
 }

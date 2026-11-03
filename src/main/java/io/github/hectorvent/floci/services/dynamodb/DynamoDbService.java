@@ -1163,6 +1163,11 @@ public class DynamoDbService {
             // Get existing item or create new one from key
             JsonNode existing = items.get(itemKey);
 
+            if (sizeRule == UpdateSizeRule.UPDATE_ITEM && updateExpression != null
+                    && !DynamoDbItemSize.updateStatementWithinLimit(updateExpression, expressionAttrNames, expressionAttrValues)) {
+                throw new UpdatedItemTooLargeException();
+            }
+
             if (conditionExpression != null) {
                 evaluateCondition(existing, conditionExpression, expressionAttrNames, expressionAttrValues, returnValuesOnConditionCheckFailure);
             }
@@ -1261,15 +1266,7 @@ public class DynamoDbService {
             // AWS validates index key values against the item the update produces.
             validateIndexKeyTypes(table, item, true);
 
-            if (sizeRule == UpdateSizeRule.UPDATE_ITEM) {
-                requireUpdateItemWithinSizeLimit(item,
-                        writtenAttributes(touchedPaths, updateExpression, expressionAttrNames),
-                        updateExpression != null
-                                ? DynamoDbItemSize.updateExpressionCost(updateExpression)
-                                : DynamoDbItemSize.attributeUpdatesCost(attributeUpdates));
-            } else {
-                requireUpdatedItemWithinSizeLimit(item);
-            }
+            requireUpdatedItemWithinSizeLimit(item);
 
             items.put(itemKey, item);
             if (shouldPersist) {
