@@ -1,0 +1,13 @@
+{
+  "upstream": "2.3.0/ee15f502bfc017861b67b076b82e1ccd032c7129",
+  "overlays": {
+    "io/github/hectorvent/floci/services/dynamodb/DynamoDbService.java": "a813acd2908e0f4c02505a55e3e2bbd7b8ac4135d86a70963dd1e10292673174",
+    "io/github/hectorvent/floci/services/dynamodb/PartiQLExecuteContext.java": "734244e611e46531c1d97ac16e7441cffcac905f96adf146a2bfd84229ce86f7",
+    "io/github/hectorvent/floci/services/dynamodb/DynamoDbPartiQLHandler.java": "036a567dd8ea8ecc49df89e2a8c70fcc739caa5737c6d5fcefaf8bdee469b4f2",
+    "io/github/hectorvent/floci/services/dynamodb/NativeDynamoDbJsonHandler.java": "e19e76936e558999f9a4892d2f9f118573e3c3cdc6d87b0f5277e6de19bc6832",
+    "io/github/hectorvent/floci/services/dynamodb/DynamoDbPartiQLParser.java": "cb0912415c513df923bd31ed2de80667fffe0eebcffdcfc8a2a7c3c2b54d3bd0",
+    "io/github/hectorvent/floci/services/dynamodb/DynamoDbPartiQLKeyPlan.java": "9832e137378e0b86c6ddc4e2723b411324dfd4485fa765141d8d17778feeb26c",
+    "io/github/hectorvent/floci/services/dynamodb/DynamoDbItemSize.java": "03502a2fc710b69d03db1a22b3c71d110872fa7765c80ea8b3012ef2d17bc79c",
+    "io/github/hectorvent/floci/services/dynamodb/DynamoDbWriteCapacity.java": "9381f18d80f484a1839005d4fadc27a041fbee12f5c7e8f367749a29e48635a4"
+  }
+}

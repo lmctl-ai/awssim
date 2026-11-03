@@ -23,6 +23,29 @@ if not archive.exists():
         archive.write_bytes(response.read())
 if hashlib.sha256(archive.read_bytes()).hexdigest() != lock['sha256']:
     sys.exit('Floci source checksum mismatch; remove .cache/floci.tar.gz and retry')
+overlay_lock_path = ROOT / 'overlay.lock.json'
+if overlay_lock_path.exists():
+    olock = json.loads(overlay_lock_path.read_text(encoding='utf-8'))
+    expected_upstream = f"{lock['tag']}/{lock['commit']}"
+    if olock.get('upstream') not in (expected_upstream, lock['commit']):
+        sys.exit(f"overlay.lock.json upstream '{olock.get('upstream')}' does not match '{expected_upstream}'")
+    with tarfile.open(archive) as tar:
+        for rel_path, expected_sha in olock.get('overlays', {}).items():
+            member_name = f"floci-{lock['commit']}/src/main/java/{rel_path}"
+            try:
+                member_file = tar.extractfile(member_name)
+            except KeyError:
+                member_file = None
+            if member_file is None:
+                sys.exit(f"Overlay target file '{rel_path}' does not exist in upstream archive")
+            actual_sha = hashlib.sha256(member_file.read()).hexdigest()
+            if actual_sha != expected_sha:
+                sys.exit(
+                    f"Upstream file '{rel_path}' sha256 mismatch!\n"
+                    f"  Expected: {expected_sha}\n"
+                    f"  Actual:   {actual_sha}\n"
+                    f"Please 3-way merge overlay files (see durable-memory/parity-ddb-overlay.md) and update overlay.lock.json."
+                )
 source = ROOT / 'build' / ('upstream-jvm' if '--jvm' in sys.argv else 'upstream')
 stamp = source / '.awssim-source-sha256'
 if source.exists() and (not stamp.exists() or stamp.read_text() != lock['sha256']):
@@ -71,3 +94,9 @@ if '--jvm' not in sys.argv:
         binary = native_source / binary.name
     shutil.copy2(binary, output)
     print(output)
+else:
+    dist = ROOT / 'dist'
+    dist.mkdir(exist_ok=True)
+    quarkus_dist = dist / 'quarkus-app'
+    shutil.copytree(source / 'target' / 'quarkus-app', quarkus_dist, dirs_exist_ok=True)
+    print(quarkus_dist / 'quarkus-run.jar')
