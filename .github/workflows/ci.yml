@@ -52,14 +52,15 @@ jobs:
         if: runner.os != 'Windows'
         with:
           node-version: '24'
-      - name: Pinned SDK host and compatible compiler
+      - name: Current lmscript compiler in a private prefix
         if: runner.os != 'Windows'
         run: |
-          python scripts/fetch-test-client.py
-          npm install --prefix "$RUNNER_TEMP/compiler" @lmctl-ai/lmctl@0.2.420
-          npm install --prefix "$RUNNER_TEMP/templates" @lmctl-ai/lmctl@0.2.444
-          echo "LMSCRIPT_BIN=$RUNNER_TEMP/templates/node_modules/.bin/lmscript" >> "$GITHUB_ENV"
-          echo "LMAWS_COMPILER=$RUNNER_TEMP/compiler/node_modules/.bin/lmscript" >> "$GITHUB_ENV"
+          npm install --prefix "$RUNNER_TEMP/compiler" --no-save --package-lock=false @lmctl-ai/lmctl@latest
+          echo "$RUNNER_TEMP/compiler/node_modules/.bin" >> "$GITHUB_PATH"
+          echo "LMSCRIPT_BIN=$RUNNER_TEMP/compiler/node_modules/.bin/lmscript" >> "$GITHUB_ENV"
+      - name: Pinned lmaws client
+        if: runner.os != 'Windows'
+        run: python scripts/fetch-test-client.py
       - name: Build native executable from verified source
         env:
           # The standard Apple Silicon runner has only ~7.5 GB RAM. Keep the

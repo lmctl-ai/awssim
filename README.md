@@ -82,11 +82,11 @@ AWSSIM_TEST_AUTH=1 python3 scripts/test-integration.py dist/awssim
 python3 scripts/test-auth.py dist/awssim
 ```
 
-CI pins and checksum-verifies lmaws v0.1.27 on Linux and macOS, running real SDK
-writes/cleanup with enforcement plus denied-policy and wrong-secret cases. lmaws
-returns exit 3 and `ok:false` for denials; policy errors can surface as generic
-`AWS_SERVICE_ERROR (HTTP 403)`. Windows uses AWS CLI and signed HTTP because that
-client release has no Windows asset. No client or compiler is needed at runtime.
+CI pins and checksum-verifies lmaws v0.1.27 on Linux and macOS. That release
+still lacks the current lmcode schema flag and invocation manifest, so its SDK
+integration is explicitly skipped while the simulator's AWS CLI and signed-HTTP
+checks continue. Windows uses AWS CLI and signed HTTP because that client
+release has no Windows asset. No client or compiler is needed at runtime.
 
 ## Build and test
 
@@ -111,12 +111,13 @@ Tests require AWS CLI (`aws`) and use explicit loopback endpoints and dummy cred
 They force a nonexistent Docker socket and verify S3 bytes, DynamoDB items, SQS messages, occupied-port errors, graceful
 shutdown, persistence across restart, and deletion of test resources.
 
-To additionally exercise the released lmaws Java SDK host, set `LMAWS_BINARY` to a
-checksum-verified lmaws v0.1.27 binary and `LMAWS_COMPILER` to lmscript 0.2.420.
-That release reads bytecode v5; the current compiler emits v6. The test exports
-its schema, compiles a small program, creates and writes all three resource types,
-checks inventories, cleans up, and independently verifies absence with AWS CLI.
-The compiler and client are test dependencies only.
+`examples/templates-client.lms` is now a compile-only lmcode program executed
+through `run_lmcode` and the invocation manifest. The pinned lmaws v0.1.27 release
+does not yet expose the current schema flag or manifest protocol, so the optional
+SDK integration prints an explicit skip instead of generating older bytecode.
+When a compatible host is released, set `LMAWS_BINARY` to that verified asset and
+`LMSCRIPT_BIN` to a private current compiler. The compiler and client remain test
+only dependencies.
 
 ## Design
 
@@ -156,20 +157,17 @@ write an object, inspect its key, and clean up.
 Run the complete isolated open/enforce example against a built simulator:
 
 ```sh
-python3 scripts/fetch-test-client.py
-npm install --prefix .cache/compiler @lmctl-ai/lmctl@0.2.420
-npm install --prefix .cache/templates @lmctl-ai/lmctl@0.2.444
-LMSCRIPT_BIN="$PWD/.cache/templates/node_modules/.bin/lmscript" \
-LMAWS_COMPILER="$PWD/.cache/compiler/node_modules/.bin/lmscript" \
-LMAWS_BINARY="$(python3 scripts/fetch-test-client.py)" \
+LMAWS_BINARY="$(python3 scripts/fetch-test-client.py)"
+npm install --prefix .cache/lmctl --no-save --package-lock=false @lmctl-ai/lmctl@latest
+LMSCRIPT_BIN="$PWD/.cache/lmctl/node_modules/.bin/lmscript" \
+LMAWS_BINARY="$LMAWS_BINARY" \
 python3 scripts/test-templates.py "$PWD/dist/awssim"
 ```
 
 Install the existing test dependency `awscli==1.44.0` in the Python environment
-first; the wire checks use its Apache-2.0 botocore signer. To test the fresh mono
-engine, set `LMSCRIPT_BIN=/home/ubuntu/lmctl-mono/bin/lmscript` instead. Neither
-installation changes the global compiler. The older compiler is only a v5
-bytecode bridge for lmaws v0.1.27; JSON generation uses the fresh engine.
+first; the wire checks use its Apache-2.0 botocore signer. For source-build checks,
+set `LMSCRIPT_BIN` to a compiler built from an owned current mono worktree. These
+commands use a private npm prefix and do not change the global compiler.
 
 The runner creates temporary state and dummy `test/test` credentials, starts its
 own loopback server, and checks four SQS request templates (create, send, receive,

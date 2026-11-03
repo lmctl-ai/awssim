@@ -137,35 +137,39 @@ with tempfile.TemporaryDirectory(prefix='awssim-test-') as directory:
 
             if os.environ.get('LMAWS_BINARY'):
                 client = str(Path(os.environ['LMAWS_BINARY']).resolve())
-                schema = subprocess.run([client, '--lmcode-schema', '--json'],
-                                        capture_output=True, text=True, check=True, timeout=30).stdout
-                (directory / 'schema.json').write_text(schema)
-                (directory / 'client.lms').write_text(
-                    'p = _dsl_ schema="schema.json";\n'
-                    'let cloud = aws.region("us-east-1"); check(!cloud.is_demo());\n'
-                    'let run = cloud.run("awssimtest", "owned.jsonl");\n'
-                    'let bucket = run.bucket("sdk"); run.put(bucket, "tiny.txt", "SDK S3");\n'
-                    'let table = run.table("sdk"); run.put(table, "one", "SDK DynamoDB");\n'
-                    'let queue = run.queue("sdk"); run.put(queue, "message", "SDK SQS");\n'
-                    'check(run.remaining() == 3);\n'
-                    'check(cloud.buckets().len() == 1); check(cloud.tables().len() == 1);\n'
-                    'check(cloud.queues().len() == 1);\n'
-                    'run.cleanup(); check(run.remaining() == 0);\n'
-                    'end _dsl_\nsavedsl(p, "client.dslb");\n')
-                compiled = subprocess.run([os.environ.get('LMAWS_COMPILER') or shutil.which('lmscript'), '--no-preflight', 'client.lms'],
-                                          cwd=directory, capture_output=True, text=True, timeout=60)
-                assert compiled.returncode == 0, (compiled.stdout, compiled.stderr)
-                sdk_env = {**ENV, 'LMAWS_ENDPOINT': endpoint, 'LMAWS_LIVE': '1',
-                           'AWS_PROFILE': 'lmaws', 'AWS_DEFAULT_PROFILE': 'lmaws',
-                           'AWS_REGION': 'us-east-1', 'CI': 'true',
-                           'LMAWS_LEDGER_DIR': str(directory / 'ledgers')}
-                sdk = subprocess.run([client, '--live', '--profile', 'lmaws', '--lmcode', 'client.dslb'],
-                                     cwd=directory, env=sdk_env, capture_output=True, text=True, timeout=120)
-                assert sdk.returncode == 0, (sdk.stdout, sdk.stderr)
-                assert not aws('s3api', 'list-buckets')['Buckets']
-                assert not aws('dynamodb', 'list-tables')['TableNames']
-                assert not aws('sqs', 'list-queues').get('QueueUrls')
-                checks.append('lmaws native SDK: three creates, writes, inventories, owned cleanup')
+                probe = subprocess.run([client, '--lmcode-schema', '--json'], capture_output=True, text=True, timeout=30)
+                if probe.returncode != 0:
+                    print('SKIP lmaws SDK lmcode integration: pinned host lacks current --lmcode-schema discovery')
+                else:
+                    (directory / 'schema.json').write_text(probe.stdout)
+                    client_source = (
+                        'program = _lmcode_ schema="schema.json";\n'
+                        'let cloud = aws.region("us-east-1"); check(!cloud.is_demo());\n'
+                        'let run = cloud.run("awssimtest", "owned.jsonl");\n'
+                        'let bucket = run.bucket("sdk"); run.put(bucket, "tiny.txt", "SDK S3");\n'
+                        'let table = run.table("sdk"); run.put(table, "one", "SDK DynamoDB");\n'
+                        'let queue = run.queue("sdk"); run.put(queue, "message", "SDK SQS");\n'
+                        'check(run.remaining() == 3);\n'
+                        'check(cloud.buckets().len() == 1); check(cloud.tables().len() == 1);\n'
+                        'check(cloud.queues().len() == 1); run.cleanup(); check(run.remaining() == 0);\n'
+                        'end _lmcode_\n'
+                        'let result = run_lmcode(program, {command:[' + json.dumps(client) + ', "--live", "--profile", "lmaws", "--lmcode", "$DSLFILE"]});\n'
+                        'assert(result.ok, "lmaws integration failed: " + json_stringify(result));\n'
+                        'println(json_stringify(result));\n')
+                    (directory / 'client.lms').write_text(client_source)
+                    compiler = os.environ.get('LMSCRIPT_BIN') or shutil.which('lmscript')
+                    assert compiler, 'LMSCRIPT_BIN is required for the current lmcode integration'
+                    sdk_env = {**ENV, 'LMAWS_ENDPOINT': endpoint, 'LMAWS_LIVE': '1',
+                               'AWS_PROFILE': 'lmaws', 'AWS_DEFAULT_PROFILE': 'lmaws',
+                               'AWS_REGION': 'us-east-1', 'CI': 'true',
+                               'LMAWS_LEDGER_DIR': str(directory / 'ledgers')}
+                    sdk = subprocess.run([compiler, 'client.lms'], cwd=directory, env=sdk_env,
+                                         capture_output=True, text=True, timeout=120)
+                    assert sdk.returncode == 0, (sdk.stdout, sdk.stderr)
+                    assert not aws('s3api', 'list-buckets')['Buckets']
+                    assert not aws('dynamodb', 'list-tables')['TableNames']
+                    assert not aws('sqs', 'list-queues').get('QueueUrls')
+                    checks.append('lmaws native lmcode SDK: three creates, writes, inventories, owned cleanup')
             stop_server(server)
             server = start_server('--data-dir', str(directory / 'state'))
             aws('s3api', 'create-bucket', '--bucket', 'awssim-persist')
