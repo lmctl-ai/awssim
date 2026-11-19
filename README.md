@@ -1,5 +1,7 @@
 # awssim
 
+Documentation: [Quick reference](https://www.lmctl.com/tools/awssim/) · [LLM skill](https://www.lmctl.com/tools/awssim/skill.html) · [Guide](https://www.lmctl.com/tools/awssim/guide.html) · [Reference](https://www.lmctl.com/tools/awssim/reference.html)
+
 Local AWS emulator on `127.0.0.1:4566`, built on [Floci](https://github.com/floci-io/floci).
 One native executable. S3, DynamoDB and SQS need neither Java nor Docker at runtime.
 
